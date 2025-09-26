@@ -1,0 +1,384 @@
+<svg viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <!-- Mesh gradient simulation -->
+    <radialGradient id="meshGrad1" cx="30%" cy="30%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#0077FF;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#FF006E;stop-opacity:0.4" />
+    </radialGradient>
+    
+    <radialGradient id="meshGrad2" cx="70%" cy="70%">
+      <stop offset="0%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8338EC;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#00F5FF;stop-opacity:0.4" />
+    </radialGradient>
+    
+    <!-- Individual cell gradients -->
+    <linearGradient id="neonBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0077FF;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="neonPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8338EC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6D28D9;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="neonPink" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#DC004E;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="neonOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFBE0B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Dynamic RNA flow gradients -->
+    <linearGradient id="rnaFlow1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#00D4FF;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#14B8A6;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#EC4899;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#FF006E;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#FF006E;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="rnaFlow2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#E11D48;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#C026D3;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#9333EA;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#7C3AED;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#8338EC;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="rnaFlow3" x1="100%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#8338EC;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#7C3AED;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#DC2626;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#EA580C;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#F97316;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#FFBE0B;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="rnaFlow4" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFBE0B;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#FCD34D;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#34D399;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#0EA5E9;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#0284C7;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#00F5FF;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Blur effects -->
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="1"/>
+    </filter>
+    
+    <filter id="rnaGlow">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    
+    <!-- Full gradient for text -->
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="25%" style="stop-color:#0077FF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8338EC;stop-opacity:1" />
+      <stop offset="75%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFBE0B;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Interactive styles -->
+  <style type="text/css">
+    <![CDATA[
+      #yeast-clickable {
+        cursor: pointer;
+      }
+      
+      #yeast-clickable:hover #cells > g > ellipse {
+        filter: brightness(1.3) drop-shadow(0 0 30px currentColor);
+        stroke-width: 4.5;
+      }
+      
+      #cells > g {
+        transition: all 0.3s ease;
+      }
+      
+      @keyframes spinCells {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(720deg); }
+      }
+      
+      .spinning-animation {
+        animation: spinCells 0.8s ease-in;
+        transform-origin: 67.5px 0px;
+      }
+    ]]>
+  </style>
+  
+  <!-- JavaScript for SVG interaction -->
+  <script type="text/javascript">
+    <![CDATA[
+      function svgYeastClick() {
+        if (window.parent && window.parent.handleYeastClickFromSVG) {
+          window.parent.handleYeastClickFromSVG();
+        }
+      }
+    ]]>
+  </script>
+  
+  <!-- Dark background with gradient -->
+  <rect x="0" y="0" width="1920" height="1080" fill="#000814"/>
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#meshGrad1)" opacity="0.2"/>
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#meshGrad2)" opacity="0.2"/>
+  
+  <!-- Yeast Cell Network with Prominent RNA Flow - Scaled 2.25x total (1.5x additional) and moved left -->
+  <g id="yeast-network" transform="translate(320, 540) scale(2.25)">
+    
+    <!-- Clickable area over yeasts - increased size -->
+    <g id="yeast-clickable" onclick="svgYeastClick()">
+      <circle cx="45" cy="0" r="120" fill="transparent" stroke="none" pointer-events="all"/>
+    </g>
+    
+    <!-- RNA double helix flows between cells -->
+    <g id="rna-helixes" opacity="1">
+      <!-- Top to Right - double helix -->
+      <g>
+        <path d="M 45,-45 C 55.5,-33 67.5,-22.5 78,-10.5 S 90,0 90,0" 
+              stroke="url(#rnaFlow1)" stroke-width="7" fill="none" filter="url(#rnaGlow)" opacity="0.7"/>
+        <path d="M 37.5,-42 C 49.5,-28.5 63,-15 75,-3 S 87,7.5 87,7.5" 
+              stroke="url(#rnaFlow1)" stroke-width="6" fill="none" opacity="0.8"/>
+        <!-- Helix crossover points -->
+        <circle cx="49.5" cy="-36" r="3" fill="#00F5FF"/>
+        <circle cx="63" cy="-22.5" r="3" fill="#0EA5E9"/>
+        <circle cx="76.5" cy="-9" r="3" fill="#EC4899"/>
+        <circle cx="87" cy="3" r="3" fill="#FF006E"/>
+        <!-- Base pairs -->
+        <line x1="45" y1="-39" x2="51" y2="-33" stroke="#00D4FF" stroke-width="1.5" opacity="0.6"/>
+        <line x1="60" y1="-25.5" x2="66" y2="-19.5" stroke="#14B8A6" stroke-width="1.5" opacity="0.6"/>
+        <line x1="73.5" y1="-12" x2="79.5" y2="-6" stroke="#EC4899" stroke-width="1.5" opacity="0.6"/>
+      </g>
+      
+      <!-- Right to Bottom - double helix -->
+      <g>
+        <path d="M 90,0 C 90,10.5 78,22.5 67.5,33 S 45,45 45,45" 
+              stroke="url(#rnaFlow2)" stroke-width="7" fill="none" filter="url(#rnaGlow)" opacity="0.7"/>
+        <path d="M 87,-7.5 C 87,3 75,15 63,28.5 S 37.5,42 37.5,42" 
+              stroke="url(#rnaFlow2)" stroke-width="6" fill="none" opacity="0.8"/>
+        <!-- Helix crossover points -->
+        <circle cx="87" cy="-3" r="3" fill="#FF006E"/>
+        <circle cx="76.5" cy="9" r="3" fill="#E11D48"/>
+        <circle cx="63" cy="22.5" r="3" fill="#C026D3"/>
+        <circle cx="49.5" cy="36" r="3" fill="#8338EC"/>
+        <!-- Base pairs -->
+        <line x1="85.5" y1="-6" x2="79.5" y2="0" stroke="#FF006E" stroke-width="1.5" opacity="0.6"/>
+        <line x1="73.5" y1="6" x2="67.5" y2="12" stroke="#C026D3" stroke-width="1.5" opacity="0.6"/>
+        <line x1="60" y1="19.5" x2="54" y2="25.5" stroke="#9333EA" stroke-width="1.5" opacity="0.6"/>
+      </g>
+      
+      <!-- Bottom to Left - double helix -->
+      <g>
+        <path d="M 45,45 C 33,45 22.5,33 10.5,22.5 S 0,0 0,0" 
+              stroke="url(#rnaFlow3)" stroke-width="7" fill="none" filter="url(#rnaGlow)" opacity="0.7"/>
+        <path d="M 42,37.5 C 28.5,37.5 15,28.5 3,15 S -7.5,3 -7.5,3" 
+              stroke="url(#rnaFlow3)" stroke-width="6" fill="none" opacity="0.8"/>
+        <!-- Helix crossover points -->
+        <circle cx="40.5" cy="39" r="3" fill="#8338EC"/>
+        <circle cx="27" cy="27" r="3" fill="#DC2626"/>
+        <circle cx="13.5" cy="13.5" r="3" fill="#EA580C"/>
+        <circle cx="3" cy="3" r="3" fill="#FFBE0B"/>
+        <!-- Base pairs -->
+        <line x1="39" y1="36" x2="33" y2="30" stroke="#7C3AED" stroke-width="1.5" opacity="0.6"/>
+        <line x1="25.5" y1="24" x2="19.5" y2="18" stroke="#DC2626" stroke-width="1.5" opacity="0.6"/>
+        <line x1="12" y1="10.5" x2="6" y2="4.5" stroke="#F97316" stroke-width="1.5" opacity="0.6"/>
+      </g>
+      
+      <!-- Left to Top - double helix -->
+      <g>
+        <path d="M 0,0 C 0,-10.5 10.5,-22.5 22.5,-33 S 45,-45 45,-45" 
+              stroke="url(#rnaFlow4)" stroke-width="7" fill="none" filter="url(#rnaGlow)" opacity="0.7"/>
+        <path d="M 3,7.5 C 3,-3 15,-15 28.5,-28.5 S 42,-37.5 42,-37.5" 
+              stroke="url(#rnaFlow4)" stroke-width="6" fill="none" opacity="0.8"/>
+        <!-- Helix crossover points -->
+        <circle cx="3" cy="-3" r="3" fill="#FFBE0B"/>
+        <circle cx="13.5" cy="-13.5" r="3" fill="#34D399"/>
+        <circle cx="27" cy="-27" r="3" fill="#0EA5E9"/>
+        <circle cx="40.5" cy="-39" r="3" fill="#00F5FF"/>
+        <!-- Base pairs -->
+        <line x1="0" y1="-6" x2="6" y2="0" stroke="#FCD34D" stroke-width="1.5" opacity="0.6"/>
+        <line x1="10.5" y1="-16.5" x2="16.5" y2="-10.5" stroke="#34D399" stroke-width="1.5" opacity="0.6"/>
+        <line x1="24" y1="-30" x2="30" y2="-24" stroke="#0284C7" stroke-width="1.5" opacity="0.6"/>
+      </g>
+    </g>
+    
+    <!-- Wrapper for spinning animation -->
+    <g id="cells-wrapper">
+      <!-- Yeast cells -->
+      <g id="cells">
+        <!-- Top cell (Cyan/Blue) -->
+        <g transform="translate(45, -45)" id="cell-top">
+          <ellipse rx="30" ry="37.5" fill="#000814" stroke="url(#neonBlue)" stroke-width="3.5" opacity="0.9"/>
+          <ellipse rx="27" ry="34.5" fill="url(#neonBlue)" opacity="0.1"/>
+          <!-- Nucleus -->
+          <circle cy="-7.5" r="12" fill="#0077FF" opacity="0.4" filter="url(#softGlow)"/>
+          <circle cy="-7.5" r="7.5" fill="#00F5FF" opacity="0.6"/>
+          <!-- Bud -->
+          <ellipse cx="27" cy="7.5" rx="12" ry="15" fill="#000814" stroke="url(#neonBlue)" stroke-width="3" opacity="0.8"/>
+          <!-- RNA inside -->
+          <circle cx="-7.5" cy="12" r="2.25" fill="#00F5FF" opacity="0.8"/>
+          <circle cx="7.5" cy="15" r="2.25" fill="#0077FF" opacity="0.8"/>
+        </g>
+        
+        <!-- Right cell (Pink) -->
+        <g transform="translate(90, 0)" id="cell-right">
+          <ellipse rx="33" ry="30" fill="#000814" stroke="url(#neonPink)" stroke-width="3.5" opacity="0.9"/>
+          <ellipse rx="30" ry="27" fill="url(#neonPink)" opacity="0.1"/>
+          <!-- Nucleus -->
+          <circle cy="-4.5" r="12" fill="#DC004E" opacity="0.4" filter="url(#softGlow)"/>
+          <circle cy="-4.5" r="7.5" fill="#FF006E" opacity="0.6"/>
+          <!-- RNA inside -->
+          <circle cx="-7.5" cy="7.5" r="2.25" fill="#FF006E" opacity="0.8"/>
+          <circle cx="7.5" cy="10.5" r="2.25" fill="#DC004E" opacity="0.8"/>
+        </g>
+        
+        <!-- Bottom cell (Purple) -->
+        <g transform="translate(45, 45)" id="cell-bottom">
+          <ellipse rx="30" ry="37.5" fill="#000814" stroke="url(#neonPurple)" stroke-width="3.5" opacity="0.9"/>
+          <ellipse rx="27" ry="34.5" fill="url(#neonPurple)" opacity="0.1"/>
+          <!-- Nucleus -->
+          <circle cy="-7.5" r="12" fill="#6D28D9" opacity="0.4" filter="url(#softGlow)"/>
+          <circle cy="-7.5" r="7.5" fill="#8338EC" opacity="0.6"/>
+          <!-- RNA inside -->
+          <circle cx="-4.5" cy="12" r="2.25" fill="#8338EC" opacity="0.8"/>
+          <circle cx="9" cy="9" r="2.25" fill="#6D28D9" opacity="0.8"/>
+        </g>
+        
+        <!-- Left cell (Orange/Yellow) -->
+        <g transform="translate(0, 0)" id="cell-left">
+          <ellipse rx="33" ry="30" fill="#000814" stroke="url(#neonOrange)" stroke-width="3.5" opacity="0.9"/>
+          <ellipse rx="30" ry="27" fill="url(#neonOrange)" opacity="0.1"/>
+          <!-- Nucleus -->
+          <circle cy="-4.5" r="12" fill="#F59E0B" opacity="0.4" filter="url(#softGlow)"/>
+          <circle cy="-4.5" r="7.5" fill="#FFBE0B" opacity="0.6"/>
+          <!-- Bud -->
+          <ellipse cx="-30" cy="7.5" rx="12" ry="15" fill="#000814" stroke="url(#neonOrange)" stroke-width="3" opacity="0.8"/>
+          <!-- RNA inside -->
+          <circle cx="-7.5" cy="7.5" r="2.25" fill="#FFBE0B" opacity="0.8"/>
+          <circle cx="7.5" cy="10.5" r="2.25" fill="#F59E0B" opacity="0.8"/>
+        </g>
+        
+        <!-- Central convergence point -->
+        <g transform="translate(45, 0)">
+          <circle r="22.5" fill="#000814" stroke="#FFFFFF" stroke-width="3" opacity="0.3"/>
+          <circle r="15" fill="url(#neonGrad)" opacity="0.2"/>
+          <circle r="7.5" fill="#FFFFFF" opacity="0.5" filter="url(#softGlow)"/>
+        </g>
+      </g>
+    </g>
+    
+    <!-- Animated RNA particles along helixes -->
+    <g id="rna-flow-particles">
+      <circle r="4.5" fill="#00F5FF" filter="url(#softGlow)">
+        <animateMotion dur="2.5s" repeatCount="indefinite">
+          <mpath href="#helix1"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2.5s" repeatCount="indefinite"/>
+      </circle>
+      <circle r="4.5" fill="#FF006E" filter="url(#softGlow)">
+        <animateMotion dur="2.5s" repeatCount="indefinite" begin="0.625s">
+          <mpath href="#helix2"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2.5s" repeatCount="indefinite" begin="0.625s"/>
+      </circle>
+      <circle r="4.5" fill="#8338EC" filter="url(#softGlow)">
+        <animateMotion dur="2.5s" repeatCount="indefinite" begin="1.25s">
+          <mpath href="#helix3"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2.5s" repeatCount="indefinite" begin="1.25s"/>
+      </circle>
+      <circle r="4.5" fill="#FFBE0B" filter="url(#softGlow)">
+        <animateMotion dur="2.5s" repeatCount="indefinite" begin="1.875s">
+          <mpath href="#helix4"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2.5s" repeatCount="indefinite" begin="1.875s"/>
+      </circle>
+    </g>
+    
+    <!-- Hidden paths for animation -->
+    <path id="helix1" d="M 45,-45 C 55.5,-33 67.5,-22.5 78,-10.5 S 90,0 90,0" fill="none"/>
+    <path id="helix2" d="M 90,0 C 90,10.5 78,22.5 67.5,33 S 45,45 45,45" fill="none"/>
+    <path id="helix3" d="M 45,45 C 33,45 22.5,33 10.5,22.5 S 0,0 0,0" fill="none"/>
+    <path id="helix4" d="M 0,0 C 0,-10.5 10.5,-22.5 22.5,-33 S 45,-45 45,-45" fill="none"/>
+  </g>
+  
+  <!-- Ultra-Modern Typography - scaled and repositioned -->
+  <g id="modern-typography" transform="translate(735, 540)">
+    <!-- Custom futuristic text -->
+    <g id="main-text">
+      <!-- RNA part -->
+      <text font-family="'Orbitron', 'Exo 2', sans-serif" font-size="200" font-weight="900" letter-spacing="-6">
+        <tspan x="0" y="30" fill="#FFFFFF">RNA</tspan>
+      </text>
+      
+      <!-- CROSS part with gradient -->
+      <text font-family="'Orbitron', 'Exo 2', sans-serif" font-size="200" font-weight="100" letter-spacing="25">
+        <tspan x="375" y="30" fill="url(#neonGrad)" opacity="0.9">CROSS</tspan>
+      </text>
+      
+      <!-- Geometric accent -->
+      <path d="M 358,0 L 358,63" stroke="#00F5FF" stroke-width="5" opacity="0.6"/>
+      <circle cx="358" cy="-15" r="10" fill="#00F5FF" opacity="0.8"/>
+      <circle cx="358" cy="78" r="10" fill="#FF006E" opacity="0.8"/>
+    </g>
+    
+    <!-- Futuristic subtitle -->
+    <g transform="translate(0, 125)">
+      <rect x="0" y="0" width="125" height="4" fill="url(#neonGrad)" opacity="0.6"/>
+      <text x="155" y="2.5" font-family="'Space Mono', 'Roboto Mono', monospace" font-size="26" 
+            fill="#64748B" letter-spacing="6" opacity="0.8">
+        TRANSCRIPTOME // NETWORK // ANALYSIS
+      </text>
+      <rect x="925" y="0" width="125" height="4" fill="url(#neonGrad)" opacity="0.6"/>
+    </g>
+    
+    <!-- Tech indicators -->
+    <g transform="translate(0, -163)" opacity="0.6">
+      <text font-family="monospace" font-size="22" fill="#00F5FF">
+        <tspan x="0" y="0">&lt;RNA_SEQUENCE_ACTIVE&gt;</tspan>
+      </text>
+      <rect x="385" y="-16" width="56" height="18" fill="none" stroke="#00F5FF" stroke-width="1.5"/>
+    </g>
+  </g>
+  
+  <!-- Abstract decorative elements - scaled and repositioned -->
+  <g id="decorative" opacity="0.3">
+    <!-- Top right corner elements -->
+    <circle cx="1760" cy="160" r="60" fill="none" stroke="url(#neonGrad)" stroke-width="3"/>
+    <circle cx="1790" cy="130" r="6" fill="#00F5FF"/>
+    
+    <!-- Bottom left decorative curve -->
+    <path d="M 160,900 Q 300,840 440,900" stroke="#8338EC" stroke-width="3" fill="none"/>
+    
+    <!-- Grid elements - bottom right -->
+    <g transform="translate(1640, 840)">
+      <rect x="0" y="0" width="80" height="80" fill="none" stroke="#00F5FF" stroke-width="1.4"/>
+      <rect x="30" y="30" width="80" height="80" fill="none" stroke="#FF006E" stroke-width="1.4"/>
+      <rect x="60" y="60" width="80" height="80" fill="none" stroke="#8338EC" stroke-width="1.4"/>
+    </g>
+    
+    <!-- Top left decorative elements -->
+    <g transform="translate(100, 100)">
+      <path d="M 0,0 L 60,0 L 60,60" stroke="#00F5FF" stroke-width="1.4" fill="none"/>
+      <circle cx="0" cy="0" r="4" fill="#00F5FF"/>
+      <circle cx="60" cy="60" r="4" fill="#FF006E"/>
+    </g>
+    
+    <!-- Additional floating particles -->
+    <circle cx="240" cy="240" r="4" fill="#8338EC" opacity="0.5"/>
+    <circle cx="1680" cy="320" r="4" fill="#FFBE0B" opacity="0.5"/>
+    <circle cx="1480" cy="760" r="4" fill="#00F5FF" opacity="0.5"/>
+    <circle cx="360" cy="760" r="4" fill="#FF006E" opacity="0.5"/>
+  </g>
+</svg>

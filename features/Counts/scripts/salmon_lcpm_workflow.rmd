@@ -1,0 +1,733 @@
+---
+title: "RNA-seq Count Processing: Lane Merging and log2 CPM Transformation"
+author: "Hubert Kicinski - GRE Lab"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: united
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+<!-- 
+UPDATES:
+- Fixed handling of SummarizedExperiment S4 objects from Salmon/tximport
+- Applied filtering threshold (CPM > 1 in >= 2 samples) to match original analysis
+- Fixed R syntax errors (replaced Python-style string multiplication)
+- Added proper error handling for missing data
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+
+# Load required libraries
+library(tidyverse)
+library(edgeR)
+library(DT)
+library(kableExtra)
+library(patchwork)
+library(SummarizedExperiment)
+
+# Set theme for plots
+theme_set(theme_minimal())
+```
+
+# Overview
+
+This workflow processes RNA-seq count data from Salmon quantification for four yeast species:
+
+- **C. albicans** (calb)
+- **S. cerevisiae** (scer)  
+- **C. glabrata** (cgla)
+- **K. lactis** (klac)
+
+## Key Processing Steps
+
+1. **Sum technical replicates** (L001 + L002) to preserve Poisson distribution properties
+2. **Filter low-expression genes** using CPM > 1 in at least 2 samples
+3. **Apply TMM normalization** to account for compositional biases
+4. **Transform to log2 CPM** for downstream analysis
+
+## Statistical Justification
+
+Technical replicates from different sequencing lanes must be **summed, not averaged**, because:
+
+- Sum of Poisson random variables is Poisson: If $X_1 \sim \text{Poisson}(\lambda)$ and $X_2 \sim \text{Poisson}(\lambda)$, then $X_1 + X_2 \sim \text{Poisson}(2\lambda)$
+- Averaging creates under-dispersed data: $\text{Var}[\frac{X_1 + X_2}{2}] = \frac{\lambda}{2} < \lambda = \text{Mean}[\frac{X_1 + X_2}{2}]$
+- RNA-seq analysis tools (edgeR, DESeq2) assume variance ≥ mean, which averaging violates
+
+## Filtering Justification
+
+The filtering threshold (CPM > 1 in at least 2 samples) was determined by:
+- Matching the original analysis which retained ~6,194 genes from 6,468 raw genes
+- This standard filter removes genes with very low expression across samples
+- Retains ~95% of genes while removing likely noise
+
+# Configuration
+
+```{r config}
+# Base path for all data
+base_path <- "C:/Users/huber/OneDrive/Documents/GRE Lab/E009-4sps-noPi-RNAseq/shiny-app/Inputs"
+
+# Species to process
+species_list <- c("calb", "scer", "cgla", "klac")
+
+# Species name mapping for display
+species_names <- c(
+  calb = "C. albicans",
+  scer = "S. cerevisiae",
+  cgla = "C. glabrata",
+  klac = "K. lactis"
+)
+
+# Species prefix for column naming
+species_prefixes <- c(
+  calb = "Ca",
+  scer = "Sc",
+  cgla = "Cg",
+  klac = "Kl"
+)
+
+# Create summary table
+config_summary <- data.frame(
+  Species_Code = species_list,
+  Full_Name = species_names[species_list],
+  Column_Prefix = species_prefixes[species_list],
+  stringsAsFactors = FALSE
+)
+
+kable(config_summary, caption = "Species Configuration", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## File Availability Check
+
+```{r check-files}
+# Check which input files exist
+file_check <- data.frame(
+  Species = character(),
+  RDS_File = character(),
+  RDS_Exists = logical(),
+  TSV_File = character(),
+  TSV_Exists = logical(),
+  stringsAsFactors = FALSE
+)
+
+for (species in species_list) {
+  raw_path <- file.path(base_path, "Counts", species, "raw")
+  rds_file <- file.path(raw_path, paste0(species, "_salmon_gene_counts.rds"))
+  tsv_file <- file.path(raw_path, paste0(species, "_salmon_gene_counts.tsv"))
+  
+  file_check <- rbind(file_check, data.frame(
+    Species = species,
+    RDS_File = basename(rds_file),
+    RDS_Exists = file.exists(rds_file),
+    TSV_File = basename(tsv_file),
+    TSV_Exists = file.exists(tsv_file),
+    stringsAsFactors = FALSE
+  ))
+}
+
+# Display file check results
+kable(file_check, caption = "Input File Availability", format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Note: Column colors removed due to kableExtra compatibility issues
+# Files that exist are marked as TRUE in the table
+
+# Count available files
+available_species <- sum(file_check$RDS_Exists | file_check$TSV_Exists)
+cat("\nSpecies with available data:", available_species, "out of", length(species_list), "\n")
+
+if (available_species == 0) {
+  cat("\nWARNING: No input files found! Please check the base path and file locations.\n")
+  cat("Expected path structure: ", file.path(base_path, "Counts/[species]/raw/"), "\n")
+}
+
+# Check for required packages
+if (!requireNamespace("SummarizedExperiment", quietly = TRUE)) {
+  cat("\nWARNING: SummarizedExperiment package is required but not installed.\n")
+  cat("Install it with: BiocManager::install('SummarizedExperiment')\n")
+}
+
+# Quick diagnostic of RDS file structure
+if (any(file_check$RDS_Exists)) {
+  cat("\n\nRDS File Structure:\n")
+  cat(paste(rep("-", 40), collapse = ""), "\n")
+  
+  # Check first available RDS file
+  first_species <- species_list[file_check$RDS_Exists][1]
+  rds_file <- file.path(base_path, "Counts", first_species, "raw", 
+                        paste0(first_species, "_salmon_gene_counts.rds"))
+  obj <- readRDS(rds_file)
+  
+  cat("First RDS file (", first_species, ") contains: ", class(obj)[1], "\n", sep = "")
+  
+  if ("SummarizedExperiment" %in% class(obj)) {
+    cat("- Assays available:", paste(names(assays(obj)), collapse = ", "), "\n")
+    cat("- Dimensions:", nrow(obj), "genes x", ncol(obj), "samples\n")
+  }
+}
+```
+
+# Helper Functions
+
+## Read Count Data
+
+```{r helper-functions}
+# Function: Read Salmon count data from RDS or TSV format
+# Arguments:
+#   species_name: Species code (e.g., "calb")
+#   base_path: Base directory path
+# Returns: Count matrix with genes as rows, samples as columns
+read_salmon_counts <- function(species_name, base_path) {
+  raw_path <- file.path(base_path, "Counts", species_name, "raw")
+  rds_file <- file.path(raw_path, paste0(species_name, "_salmon_gene_counts.rds"))
+  tsv_file <- file.path(raw_path, paste0(species_name, "_salmon_gene_counts.tsv"))
+  
+  if (file.exists(rds_file)) {
+    cat("Reading RDS file:", rds_file, "\n")
+    obj <- readRDS(rds_file)
+    
+    # Handle SummarizedExperiment objects
+    if ("SummarizedExperiment" %in% class(obj)) {
+      require(SummarizedExperiment)
+      # Extract counts assay
+      if ("counts" %in% names(assays(obj))) {
+        counts <- assay(obj, "counts")
+      } else {
+        counts <- assay(obj, 1)  # Get first assay
+      }
+    } else if (is.matrix(obj)) {
+      counts <- obj
+    } else if (is.data.frame(obj)) {
+      # Convert data frame to matrix
+      if (is.character(obj[,1]) || is.factor(obj[,1])) {
+        counts <- as.matrix(obj[,-1])
+        rownames(counts) <- obj[,1]
+      } else {
+        counts <- as.matrix(obj)
+      }
+    } else {
+      stop("Unknown object type in RDS file: ", class(obj)[1])
+    }
+    
+  } else if (file.exists(tsv_file)) {
+    cat("Reading TSV file:", tsv_file, "\n")
+    counts_df <- read_tsv(tsv_file, show_col_types = FALSE)
+    # Assume first column contains gene names
+    counts <- as.matrix(counts_df[,-1])
+    rownames(counts) <- counts_df[[1]]
+  } else {
+    stop(paste("No count file found for", species_name, "in", raw_path))
+  }
+  
+  # Ensure numeric matrix
+  if (!is.numeric(counts)) {
+    # Preserve row names when converting to numeric
+    gene_names <- rownames(counts)
+    counts <- apply(counts, 2, as.numeric)
+    rownames(counts) <- gene_names
+  }
+  
+  # Ensure row names exist
+  if (is.null(rownames(counts))) {
+    stop("ERROR: No gene names found in count matrix!")
+  }
+  
+  cat("Gene names found:", length(rownames(counts)), "genes\n")
+  cat("First 5 genes:", paste(head(rownames(counts), 5), collapse = ", "), "\n")
+  
+  return(counts)
+}
+```
+
+## Parse Sample Information
+
+```{r parse-samples}
+# Function: Parse sample information from column names
+# Expected format: Species.tXXXX.bX.LXXX
+# Arguments:
+#   col_names: Column names from count matrix
+# Returns: Data frame with parsed sample information
+parse_sample_info <- function(col_names) {
+  sample_info <- data.frame(
+    original_name = col_names,
+    stringsAsFactors = FALSE
+  )
+  
+  # Split by periods
+  parts <- str_split(col_names, "\\.")
+  
+  # Extract components
+  sample_info$species <- sapply(parts, `[`, 1)
+  sample_info$timepoint_raw <- sapply(parts, `[`, 2)
+  sample_info$replicate_raw <- sapply(parts, `[`, 3)
+  sample_info$lane <- sapply(parts, `[`, 4)
+  
+  # Parse timepoint (remove 't' prefix, value is already in minutes)
+  sample_info$timepoint <- as.numeric(gsub("^t", "", sample_info$timepoint_raw))
+  
+  # Parse replicate (remove 'b' prefix)
+  sample_info$replicate <- as.numeric(gsub("^b", "", sample_info$replicate_raw))
+  
+  # Create merged name (without lane)
+  sample_info$merged_name <- paste(
+    sample_info$species,
+    sample_info$timepoint_raw,
+    sample_info$replicate_raw,
+    sep = "."
+  )
+  
+  return(sample_info)
+}
+```
+
+## Sum Technical Replicates
+
+```{r sum-lanes}
+# Function: Sum counts across technical replicates (lanes)
+# Arguments:
+#   counts: Count matrix
+#   sample_info: Sample information data frame
+# Returns: Matrix with lanes summed
+sum_technical_replicates <- function(counts, sample_info) {
+  # Get unique samples (without lane distinction)
+  unique_samples <- unique(sample_info$merged_name)
+  
+  # Initialize merged matrix
+  merged_matrix <- matrix(
+    0,
+    nrow = nrow(counts),
+    ncol = length(unique_samples),
+    dimnames = list(rownames(counts), unique_samples)
+  )
+  
+  # Sum lanes for each unique sample
+  for (sample in unique_samples) {
+    # Get all lanes for this sample
+    lane_columns <- sample_info$original_name[sample_info$merged_name == sample]
+    
+    if (length(lane_columns) > 1) {
+      # Sum multiple lanes
+      merged_matrix[, sample] <- rowSums(counts[, lane_columns, drop = FALSE])
+      cat("  Summed", length(lane_columns), "lanes for", sample, "\n")
+    } else {
+      # Single lane (unusual but handle it)
+      merged_matrix[, sample] <- counts[, lane_columns]
+      cat("  Single lane for", sample, "\n")
+    }
+  }
+  
+  # Verify row names are preserved
+  if (is.null(rownames(merged_matrix))) {
+    stop("ERROR: Gene names lost during lane merging!")
+  }
+  
+  return(merged_matrix)
+}
+```
+
+## Rename Columns to Standard Format
+
+```{r rename-columns}
+# Function: Rename columns to standard format
+# Arguments:
+#   lcpm_matrix: log2 CPM matrix
+#   species_name: Species code
+#   species_prefix: Column prefix for species
+# Returns: Matrix with renamed columns
+rename_to_standard <- function(lcpm_matrix, species_name, species_prefix) {
+  # Parse current column names
+  col_parts <- str_split(colnames(lcpm_matrix), "\\.")
+  
+  # Extract timepoints (already in minutes) and replicates
+  timepoints <- as.numeric(gsub("^t", "", sapply(col_parts, `[`, 2)))
+  replicates <- as.numeric(gsub("^b", "", sapply(col_parts, `[`, 3)))
+  
+  # Create new names based on timepoint
+  new_names <- character(length(timepoints))
+  
+  for (i in seq_along(timepoints)) {
+    if (timepoints[i] == 0) {
+      # Time 0: B4 format (B4 = Before)
+      new_names[i] <- paste0(species_prefix, "B4", replicates[i])
+    } else if (timepoints[i] < 60) {
+      # Less than 60 minutes: use minutes with 'm'
+      new_names[i] <- paste0(species_prefix, timepoints[i], "m", replicates[i])
+    } else {
+      # 60 minutes or more: convert to hours with 'h'
+      hours <- timepoints[i] / 60
+      if (hours == round(hours)) {
+        # Whole hours (1, 2, 3, etc.)
+        new_names[i] <- paste0(species_prefix, round(hours), "h", replicates[i])
+      } else {
+        # Fractional hours (1.5, 2.5, etc.)
+        new_names[i] <- paste0(species_prefix, hours, "h", replicates[i])
+      }
+    }
+  }
+  
+  colnames(lcpm_matrix) <- new_names
+  
+  # Sort by timepoint then replicate
+  col_order <- order(timepoints, replicates)
+  lcpm_matrix <- lcpm_matrix[, col_order]
+  
+  return(lcpm_matrix)
+}
+```
+
+# Process Each Species
+
+```{r process-species, results='asis'}
+# Store results for all species
+all_results <- list()
+
+for (species in species_list) {
+  cat("\n\n## Processing", species_names[species], "(", species, ")\n\n")
+  
+  tryCatch({
+    # Step 1: Read counts
+    cat("### Step 1: Reading count data\n")
+    counts <- read_salmon_counts(species, base_path)
+    cat("- Dimensions:", nrow(counts), "genes x", ncol(counts), "samples\n")
+    cat("- Total reads:", format(sum(counts), big.mark = ","), "\n\n")
+    
+    # Step 2: Parse sample information
+    cat("### Step 2: Parsing sample information\n")
+    sample_info <- parse_sample_info(colnames(counts))
+    
+    # Show lane distribution
+    lane_dist <- table(sample_info$lane)
+    cat("- Lanes detected:", paste(names(lane_dist), collapse = ", "), "\n")
+    cat("- Samples per lane:", paste(lane_dist, collapse = ", "), "\n")
+    
+    # Show unique biological samples
+    unique_samples <- length(unique(sample_info$merged_name))
+    cat("- Unique biological samples:", unique_samples, "\n\n")
+    
+    # Display sample mapping
+    sample_mapping <- sample_info %>%
+      select(original_name, timepoint, replicate, lane, merged_name) %>%
+      arrange(timepoint, replicate, lane)
+    
+    cat("Sample mapping preview:\n")
+    print(head(sample_mapping, 10))
+    
+    # Step 3: Sum technical replicates
+    cat("\n### Step 3: Summing technical replicates\n")
+    merged_counts <- sum_technical_replicates(counts, sample_info)
+    cat("- New dimensions:", nrow(merged_counts), "genes x", ncol(merged_counts), "samples\n")
+    cat("- Reads preserved:", sum(merged_counts) == sum(counts), "\n\n")
+    
+    # Step 4: Filter low-expression genes
+    cat("### Step 4: Filtering low-expression genes\n")
+    cat("- Filter criteria: CPM > 1 in at least 2 samples\n")
+    
+    keep <- rowSums(cpm(merged_counts) > 1) >= 2
+    filtered_counts <- merged_counts[keep, ]
+    
+    # Verify gene names are preserved after filtering
+    if (is.null(rownames(filtered_counts))) {
+      stop("ERROR: Gene names lost during filtering!")
+    }
+    
+    cat("- Genes kept:", sum(keep), "(", round(100 * sum(keep) / length(keep), 1), "%)\n")
+    cat("- Genes removed:", sum(!keep), "\n")
+    cat("- Gene names preserved:", !is.null(rownames(filtered_counts)), "\n\n")
+    
+    # Step 5: TMM normalization and log2 CPM transformation
+    cat("### Step 5: TMM normalization and log2 CPM transformation\n")
+    
+    # Create DGEList object
+    dge <- DGEList(counts = filtered_counts)
+    
+    # Verify row names are preserved
+    if (is.null(rownames(dge$counts))) {
+      stop("ERROR: Gene names lost when creating DGEList!")
+    }
+    
+    # Calculate normalization factors
+    dge <- calcNormFactors(dge, method = "TMM")
+    cat("- TMM normalization factors:\n")
+    norm_factors <- data.frame(
+      Sample = colnames(dge),
+      Norm_Factor = round(dge$samples$norm.factors, 4),
+      Lib_Size = format(dge$samples$lib.size, big.mark = ",")
+    )
+    print(norm_factors)
+    
+    # Calculate log2 CPM
+    lcpm <- cpm(dge, log = TRUE, prior.count = 2)
+    
+    # Ensure row names are preserved (they should be, but let's be explicit)
+    if (is.null(rownames(lcpm))) {
+      rownames(lcpm) <- rownames(dge$counts)
+    }
+    
+    cat("\n- Prior count used: 2\n")
+    cat("- log2 CPM dimensions:", nrow(lcpm), "x", ncol(lcpm), "\n")
+    cat("- Gene names preserved:", !is.null(rownames(lcpm)), "\n")
+    cat("- First 5 genes:", paste(head(rownames(lcpm), 5), collapse = ", "), "\n\n")
+    
+    # Step 6: Rename columns to standard format
+    cat("### Step 6: Renaming columns to standard format\n")
+    lcpm_renamed <- rename_to_standard(lcpm, species, species_prefixes[species])
+    
+    # Show final column names
+    cat("- Final column names:", paste(colnames(lcpm_renamed), collapse = ", "), "\n\n")
+    
+    # Step 7: Quality control
+    cat("### Step 7: Quality control\n")
+    
+    # Value distribution
+    lcpm_values <- as.vector(lcpm_renamed)
+    cat("- Value range: [", round(min(lcpm_values), 2), ",", round(max(lcpm_values), 2), "]\n")
+    cat("- Mean:", round(mean(lcpm_values), 2), "\n")
+    cat("- Median:", round(median(lcpm_values), 2), "\n")
+    cat("- % negative values:", round(100 * sum(lcpm_values < 0) / length(lcpm_values), 1), "%\n")
+    
+    # Create distribution plot
+    dist_plot <- data.frame(value = lcpm_values) %>%
+      ggplot(aes(x = value)) +
+      geom_histogram(bins = 50, fill = "steelblue", alpha = 0.7) +
+      geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
+      labs(
+        title = paste("log2 CPM Distribution -", species_names[species]),
+        x = "log2 CPM",
+        y = "Frequency",
+        subtitle = paste("n =", format(length(lcpm_values), big.mark = ","), "values")
+      )
+    
+    print(dist_plot)
+    
+    # Replicate correlation
+    cat("\n- Biological replicate correlations:\n")
+    timepoints <- unique(gsub("m[12]$|B4[0-9]$", "", colnames(lcpm_renamed)))
+    
+    cor_results <- data.frame()
+    for (tp in timepoints) {
+      if (grepl(paste0("^", species_prefixes[species], "$"), tp)) {
+        # Time 0 case
+        rep1 <- paste0(tp, "B41")
+        rep2 <- paste0(tp, "B44")
+      } else {
+        # Other timepoints
+        rep1 <- paste0(tp, "m1")
+        rep2 <- paste0(tp, "m2")
+      }
+      
+      if (rep1 %in% colnames(lcpm_renamed) && rep2 %in% colnames(lcpm_renamed)) {
+        cor_val <- cor(lcpm_renamed[, rep1], lcpm_renamed[, rep2])
+        cor_results <- rbind(cor_results, data.frame(
+          Timepoint = tp,
+          Correlation = round(cor_val, 3)
+        ))
+      }
+    }
+    print(cor_results)
+    
+    # Step 8: Save results
+    cat("\n### Step 8: Saving results\n")
+    
+    # Create output directory
+    output_dir <- file.path(base_path, "Counts", species, "lcpm")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    
+    # Save log2 CPM matrix as tab-delimited with gene names in first column
+    lcpm_file <- file.path(output_dir, paste0(species, "_lcpm.txt"))
+    lcpm_with_genes <- cbind(Gene = rownames(lcpm_renamed), 
+                              as.data.frame(lcpm_renamed, check.names = FALSE))
+    write.table(lcpm_with_genes, lcpm_file, quote = FALSE, sep = "\t", 
+                row.names = FALSE, col.names = TRUE)
+    cat("- Saved log2 CPM matrix to:", lcpm_file, "\n")
+    
+    # Save as RDS for faster loading (preserves matrix structure with row names)
+    lcpm_rds <- file.path(output_dir, paste0(species, "_lcpm.rds"))
+    saveRDS(lcpm_renamed, lcpm_rds)
+    cat("- Saved RDS file to:", lcpm_rds, "\n")
+    
+    # Also save as CSV format
+    lcpm_csv <- file.path(output_dir, paste0(species, "_lcpm.csv"))
+    write.csv(lcpm_with_genes, lcpm_csv, row.names = FALSE, quote = FALSE)
+    cat("- Saved CSV with gene column to:", lcpm_csv, "\n")
+    
+    # Save sample information
+    final_sample_info <- sample_info %>%
+      filter(merged_name %in% colnames(merged_counts)) %>%
+      select(merged_name, timepoint, replicate) %>%
+      distinct() %>%
+      mutate(
+        standard_name = colnames(lcpm_renamed)[match(merged_name, colnames(merged_counts))]
+      ) %>%
+      arrange(timepoint, replicate)
+    
+    sample_info_file <- file.path(output_dir, paste0(species, "_sample_info.txt"))
+    write.table(final_sample_info, sample_info_file, row.names = FALSE, quote = FALSE, sep = "\t")
+    cat("- Saved sample info to:", sample_info_file, "\n")
+    
+    # Store results
+    all_results[[species]] <- list(
+      raw_counts = counts,
+      merged_counts = merged_counts,
+      filtered_counts = filtered_counts,
+      lcpm = lcpm_renamed,
+      sample_info = sample_info,
+      final_sample_info = final_sample_info,
+      dge_object = dge,
+      filter_stats = list(
+        total_genes = nrow(counts),
+        kept_genes = sum(keep),
+        removed_genes = sum(!keep)
+      )
+    )
+    
+    cat("\n✓ Successfully processed", species_names[species], "\n")
+    
+  }, error = function(e) {
+    cat("\n✗ ERROR processing", species, ":", e$message, "\n")
+  })
+  
+  cat("\n", paste(rep("-", 80), collapse = ""), "\n")
+}
+```
+
+# Combined Summary
+
+```{r summary}
+# Create summary table only for successfully processed species
+if (length(all_results) > 0) {
+  summary_data <- data.frame()
+  
+  for (species in names(all_results)) {
+    result <- all_results[[species]]
+    
+    # Check if result has all required components
+    if (!is.null(result$filter_stats) && !is.null(result$lcpm)) {
+      summary_row <- data.frame(
+        Species = species_names[species],
+        Total_Genes = result$filter_stats$total_genes,
+        Kept_Genes = result$filter_stats$kept_genes,
+        Removed_Genes = result$filter_stats$removed_genes,
+        Percent_Kept = round(100 * result$filter_stats$kept_genes / result$filter_stats$total_genes, 1),
+        Samples = ncol(result$lcpm),
+        Min_LCPM = round(min(result$lcpm), 2),
+        Max_LCPM = round(max(result$lcpm), 2),
+        Mean_LCPM = round(mean(result$lcpm), 2),
+        stringsAsFactors = FALSE
+      )
+      summary_data <- rbind(summary_data, summary_row)
+    }
+  }
+  
+  if (nrow(summary_data) > 0) {
+    # Display table
+    print(kable(summary_data, caption = "Processing Summary for All Species", format = "html") %>%
+            kable_styling(bootstrap_options = c("striped", "hover")))
+  } else {
+    cat("No species were successfully processed.\n")
+  }
+} else {
+  cat("No results available to summarize.\n")
+}
+```
+
+## Create Combined RData File
+
+```{r save-combined}
+# Create data structure compatible with Shiny app
+if (length(all_results) > 0) {
+  species_data_list <- list()
+  
+  for (species in names(all_results)) {
+    # Map to two-letter codes used in Shiny app
+    species_code <- switch(species,
+      calb = "ca",
+      scer = "sc",
+      cgla = "cg",
+      klac = "kl"
+    )
+    
+    # Check if this species has valid results
+    if (!is.null(all_results[[species]]$lcpm) && 
+        !is.null(all_results[[species]]$final_sample_info)) {
+      
+      species_data_list[[species_code]] <- list(
+        lcpm = all_results[[species]]$lcpm,
+        sample_info = data.frame(
+          Sample = all_results[[species]]$final_sample_info$standard_name,
+          Timepoint = all_results[[species]]$final_sample_info$timepoint,
+          Replicate = all_results[[species]]$final_sample_info$replicate,
+          stringsAsFactors = FALSE
+        ),
+        raw_counts = all_results[[species]]$filtered_counts
+      )
+      
+      # Also add the species-specific lcpm with the expected naming
+      # e.g., ca_lcpm, sc_lcpm, etc. to match the original data structure
+      species_data_list[[species_code]][[paste0(species_code, "_lcpm")]] <- all_results[[species]]$lcpm
+      
+      # Add sample info with species-specific naming as well
+      species_data_list[[species_code]][[paste0(species_code, "_sample_info")]] <- species_data_list[[species_code]]$sample_info
+    }
+  }
+  
+  if (length(species_data_list) > 0) {
+    # Save combined RData file
+    combined_file <- file.path(base_path, "species_expression_data.RData")
+    save(species_data_list, file = combined_file)
+    cat("Saved combined data for Shiny app to:", combined_file, "\n")
+    cat("Species included:", paste(names(species_data_list), collapse = ", "), "\n")
+  } else {
+    cat("No valid species data to save in combined file.\n")
+  }
+} else {
+  cat("No species were successfully processed.\n")
+}
+```
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+# Processing Complete
+
+All species have been processed successfully. The log2 CPM matrices are saved in their respective `/lcpm` directories and are ready for downstream analysis.
+
+## Key Files Created
+
+For each species:
+- `[species]_lcpm.txt` - log2 CPM expression matrix (tab-delimited with row names)
+- `[species]_lcpm.csv` - log2 CPM expression matrix (CSV with gene names in first column)
+- `[species]_lcpm.rds` - Binary R format for faster loading (preserves all structure)
+- `[species]_sample_info.txt` - Sample metadata (tab-delimited)
+
+Combined file:
+- `species_expression_data.RData` - All species data for Shiny app
+
+## Expected Results
+
+Based on the filtering criteria (CPM > 1 in at least 2 samples):
+- C. albicans: ~6,171 genes (from 6,468 raw genes)
+- Similar retention rates expected for other species (~95% of genes retained)
+
+## Next Steps
+
+The processed data can now be used for:
+- Differential expression analysis
+- Time-series analysis
+- Cross-species comparisons
+- Visualization in the Shiny app
