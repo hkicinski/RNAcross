@@ -283,11 +283,11 @@ r <- getOption("repos")
 r["CRAN"] <- "https://cloud.r-project.org"
 options(repos = r)
 
-# ============ PERFORMANCE CONFIGURATION ============
-# Set to TRUE only for debugging - disable in production for better performance
+#============ PERFORMANCE CONFIGURATION ============
+#set to TRUE for debugging - disable in production
 DEBUG_MODE <- FALSE
 
-# Helper function to conditionally print debug messages
+#conditional debug print
 debug_print <- function(...) {
   if (DEBUG_MODE) {
     message(paste0("[DEBUG] ", ...))
@@ -300,11 +300,11 @@ debug_cat <- function(...) {
   }
 }
 
-# ============ MEMOIZATION CACHE ============
-# Create a cache environment for expensive operations
+#============ MEMOIZATION CACHE ============
+#cache environment for expensive operations
 .performance_cache <- new.env(hash = TRUE)
 
-# Helper function to get/set cached values
+#get/set cached values
 cache_get_or_compute <- function(cache_key, compute_fn, ...) {
   if (exists(cache_key, envir = .performance_cache)) {
     return(get(cache_key, envir = .performance_cache))
@@ -315,7 +315,7 @@ cache_get_or_compute <- function(cache_key, compute_fn, ...) {
   return(result)
 }
 
-# Clear cache (useful when data changes)
+#clear cache when data changes
 clear_performance_cache <- function() {
   rm(list = ls(envir = .performance_cache), envir = .performance_cache)
 }
@@ -349,15 +349,15 @@ suppressMessages({
 # Load the new RData file with HOG-based orthogroups
 load(file.path("..", "data", "RData_perSpecies_HOG_clean_11182025_rlog.RData"))
 
-# Pre-process gene lookup table once at startup for optimal performance
+#preprocess gene lookup table at startup
 if (!is.null(all_species_data$gene_lookup)) {
   if (!is.data.table(all_species_data$gene_lookup)) {
     all_species_data$gene_lookup <- as.data.table(all_species_data$gene_lookup)
   }
-  #keys 4 faster searching
+  #keys for faster searching
   setkey(all_species_data$gene_lookup, gene_id, gene_name, species)
   
-  # Pre-compute uppercase versions for faster case-insensitive matching
+  #precompute uppercase for faster case-insensitive matching
   all_species_data$gene_lookup[, gene_id_upper := toupper(gene_id)]
   all_species_data$gene_lookup[, gene_name_upper := toupper(gene_name)]
 }
@@ -1083,26 +1083,24 @@ custom_css <- tags$style(HTML("
    .gene-explorer-container {
   
 "))
-#helper function to get expression matrix based on transformation - optimized
+#get expression matrix based on transformation (optimized)
 get_expression_matrix <- function(species_code, transform_type, species_data = NULL) {
   if (is.null(species_data)) {
     species_data <- all_species_data[[species_code]]
   }
   
-  # Pre-compute matrix name based on naming convention
+  #precompute matrix name
   is_cg <- species_code == "cg"
   
   if (transform_type == "rlog") {
-    #get rlog matrix
     matrix_name <- if(is_cg) "rlog" else paste0(species_code, "_rlog")
     expr_matrix <- species_data[[matrix_name]]
   } else {
-    #get lcpm matrix (default)
     matrix_name <- if(is_cg) "lcpm" else paste0(species_code, "_lcpm")
     expr_matrix <- species_data[[matrix_name]]
   }
   
-  # Debug output only when DEBUG_MODE is TRUE
+  #debug output
   if (DEBUG_MODE) {
     if (!is.null(expr_matrix)) {
       debug_cat("\n=== get_expression_matrix DEBUG ===\n")
@@ -1131,31 +1129,26 @@ get_expression_label <- function(transform_type) {
 ```
 
 ```{r helper_functions, echo=FALSE}
-#function to query genes using the lookup table - optimized with pre-computed uppercase
+#query genes using lookup table (optimized)
 query_gene_lookup <- function(query, species_filter = NULL, current_data = NULL) {
-  #access the gene lookup table from current data
   if (is.null(current_data)) {
     current_data <- all_species_data
   }
   lookup_table <- current_data$gene_lookup
   
-  # Ensure it's a data.table
   if (!is.data.table(lookup_table)) {
     lookup_table <- as.data.table(lookup_table)
   }
   
-  #normalize query
   query <- toupper(trimws(query))
   
-  # Use pre-computed uppercase columns if available for faster matching
+  #use precomputed uppercase columns if available
   if ("gene_id_upper" %in% names(lookup_table)) {
     matches <- lookup_table[gene_id_upper == query | gene_name_upper == query, ]
   } else {
-    #fallback to toupper() if pre-computed columns don't exist
     matches <- lookup_table[toupper(gene_id) == query | toupper(gene_name) == query, ]
   }
   
-  #apply species filter if provided
   if (!is.null(species_filter) && length(species_filter) > 0) {
     matches <- matches[species %in% species_filter]
   }
@@ -1237,9 +1230,8 @@ query_orthogroups <- function(gene_query, current_data, config, get_species_data
 }
 
 
-#modified query function for HOG + Gene Lookup - optimized
+#query function for HOG + Gene Lookup (optimized)
 query_gene_flexible <- function(gene_query, species_data, all_species_data) {
-  # Normalize query
   gene_query <- toupper(trimws(gene_query))
   if (nchar(gene_query) == 0) return(NULL)
   
@@ -2082,10 +2074,9 @@ create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
     heat_wide <- sp_agg %>%
       pivot_wider(names_from = Timepoint, values_from = Value, values_fn = mean)
     
-    #ensure all pathways are present - optimized
+    #ensure all pathways present
     missing_pathways <- setdiff(pathway_order, heat_wide$Pathway)
     if (length(missing_pathways) > 0) {
-      # Create missing data matrix efficiently
       missing_df <- data.table(Pathway = missing_pathways)
       missing_df[, (data_timepoints) := NA_real_]
       heat_wide <- rbindlist(list(as.data.table(heat_wide), missing_df), fill = TRUE)
@@ -2709,43 +2700,40 @@ aggregate_hog_expression <- function(expr_matrix, method = "eigengene") {
 }
 
 
-# for the single-species PCA functionality
+#single-species PCA plot
 create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE) {
   debug_print("Starting PCA plot creation")
   debug_print(paste("Expression matrix dimensions:", nrow(expression_matrix), "x", ncol(expression_matrix)))
   debug_print(paste("Sample info rows:", nrow(sample_info)))
   
-  # makes sure the user has a loaded exp matrix 
   if (!is.matrix(expression_matrix) && !is.data.frame(expression_matrix)) {
     stop("Expression matrix must be a matrix or data frame")
   }
   
-  # converts to matrix if you fed a data frame
   if (is.data.frame(expression_matrix)) {
     expression_matrix <- as.matrix(expression_matrix)
   }
   
-  # data filtering step - use vectorized rowVars for better performance
+  #filter genes with zero variance
   debug_print("Calculating gene variances")
   var_genes <- apply(expression_matrix, 1, var)
   expression_matrix <- expression_matrix[var_genes > 0, , drop = FALSE]
   debug_print(paste("Genes after variance filtering:", nrow(expression_matrix)))
   
-  # transposes the matrix for PCA (samples as rows here)
+  #transpose for PCA (samples as rows)
   debug_print("Transposing matrix")
   mat <- t(expression_matrix)
   debug_print(paste("Transposed matrix dimensions:", nrow(mat), "x", ncol(mat)))
   
-  # runs a PCA with centered transformation (exp-mu)
+  #run PCA with centering
   debug_print("Running PCA")
   pca_res <- prcomp(mat, scale. = FALSE, center = TRUE)
   
-  # calculates variance
+  #calculate variance explained
   var_explained <- (pca_res$sdev^2 / sum(pca_res$sdev^2)) * 100
   debug_print(paste("Variance explained PC1:", round(var_explained[1], 2), "%"))
   debug_print(paste("Variance explained PC2:", round(var_explained[2], 2), "%"))
   
-  # creates data frame for plotting
   debug_print("Creating plot data frame")
   pca_data <- data.frame(
     PC1 = pca_res$x[, 1],
@@ -2753,21 +2741,18 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
     Sample = rownames(pca_res$x)
   )
   
-  # merge with sample information dataframe
   debug_print("Merging with sample info")
   pca_data <- merge(pca_data, sample_info, by = "Sample", all.x = TRUE)
   debug_print(paste("Final data frame rows:", nrow(pca_data)))
   
-  # timepoints ordered along the legend
   pca_data$Timepoint <- factor(pca_data$Timepoint, levels = TIME_POINTS)
   
-  # Pre-compute plot styling once (avoid repeated conditionals)
+  #precompute plot styling
   plot_bg_color <- if(is_dark_mode) "#2c3034" else "white"
   text_color <- if(is_dark_mode) "white" else "black"
   grid_color <- if(is_dark_mode) "gray30" else "gray90"
   minor_grid_color <- if(is_dark_mode) "gray20" else "gray95"
   
-  # creates plots with viridis color scale for natural progression
   debug_print("Creating ggplot with viridis colors")
   p <- ggplot(pca_data, aes(x = PC1, y = PC2, color = Timepoint, text = Sample)) +
     geom_point(size = 3) +
@@ -2883,24 +2868,20 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
   
   if (debug) message(paste("PCA: Starting with", method_label))
   
-  # Get configuration and data (with extensible defaults)
   config <- species_config
   current_data <- if (!is.null(all_species_data_obj)) all_species_data_obj else all_species_data
   
-  # Get data for all species and CACHE expression matrices upfront
-  # This avoids repeated calls to get_expression_matrix throughout the function
+  #get data and CACHE expression matrices upfront
   species_data_list <- list()
-  expression_matrix_cache <- list()  # Cache for expression matrices
-  sample_info_cache <- list()        # Cache for sample info
+  expression_matrix_cache <- list()
+  sample_info_cache <- list()
   
   for (species_id in names(config)) {
     sp_data <- get_species_data(species_id)
     species_data_list[[species_id]] <- sp_data
     
     if (!is.null(sp_data)) {
-      # Cache expression matrix once per species
       expression_matrix_cache[[species_id]] <- get_expression_matrix(species_id, transform_type, sp_data)
-      # Cache sample info
       sample_info_cache[[species_id]] <- if (!is.null(sp_data$sample_info)) sp_data$sample_info else sp_data[[paste0(species_id, "_sample_info")]]
     }
   }
@@ -2967,7 +2948,7 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
              add_annotations(text = error_msg, showarrow = FALSE))
   }
   
-  #create sample metadata dynamically using cached data
+  #create sample metadata using cached data
   sample_metadata_list <- list()
   
   for (species_id in names(config)) {
@@ -3035,7 +3016,7 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     }
   }
   
-  #pre-aggregate HOGs once per species using cached matrices
+  #pre-aggregate HOGs per species using cached matrices
   species_hog_expr <- list()
   
   for (species_id in names(config)) {
@@ -3044,17 +3025,13 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     
     if (debug) message(paste("PCA: pre-aggregating", species_id, "-", nrow(lcpm_matrix), "genes"))
     
-    #build species-specific HOG map
+    #build species HOG map
     species_hog_map <- lapply(hog_gene_map[common_hogs], function(hog) {
-      if (!is.null(hog[[species_id]])) {
-        return(hog[[species_id]])
-      } else {
-        return(NULL)
-      }
+      if (!is.null(hog[[species_id]])) hog[[species_id]] else NULL
     })
     names(species_hog_map) <- common_hogs
     
-    #pre-aggregate all HOGs for this species (using cached matrix)
+    #aggregate HOGs using cached matrix
     species_hog_expr[[species_id]] <- preaggregate_species_hogs(
       lcpm_matrix = lcpm_matrix,
       species_hog_map = species_hog_map,
@@ -3064,16 +3041,16 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     )
   }
   
-  # Pre-build species code lookup for faster access
+  #prebuild species code lookup
   species_short_to_code <- setNames(names(config), sapply(config, `[[`, "short"))
   species_name_to_code <- setNames(names(config), sapply(config, `[[`, "name"))
   
-  #now fill matrix using pre-aggregated values (optimized)
+  #fill matrix using pre-aggregated values
   for (i in 1:nrow(sample_metadata)) {
     sample_name <- sample_metadata$Sample[i]
     species <- sample_metadata$Species[i]
     
-    #find species code using pre-built lookup (faster than loop)
+    #find species code via lookup
     species_code <- if (species %in% names(species_short_to_code)) {
       species_short_to_code[[species]]
     } else if (species %in% names(species_name_to_code)) {
@@ -3085,7 +3062,6 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     if (is.null(species_code)) next
     if (is.null(species_hog_expr[[species_code]])) next
     
-    # Use cached expression matrix
     lcpm_matrix <- expression_matrix_cache[[species_code]]
     
     if (is.null(lcpm_matrix)) next
@@ -3093,12 +3069,11 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     
     sample_idx <- which(colnames(lcpm_matrix) == sample_name)
     
-    #fill HOG values from pre-aggregated data (vectorized where possible)
+    #fill HOG values from pre-aggregated data
     for (j in seq_along(common_hogs)) {
       hog <- common_hogs[j]
       
       if (!is.null(species_hog_expr[[species_code]][[hog]])) {
-        #extract value for this sample from pre-aggregated vector
         sample_matrix[i, j] <- species_hog_expr[[species_code]][[hog]][sample_idx]
         matches_by_species[[species_code]] <- matches_by_species[[species_code]] + 1
       }
@@ -3135,7 +3110,7 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
   sample_matrix <- sample_matrix[, keep_cols, drop = FALSE]
   debug_print(paste("Using", sum(keep_cols), "single-copy HOGs for PCA"))
   
-  # Remove rows (samples) that have all NAs
+  #remove samples with all NAs
   row_has_data <- apply(sample_matrix, 1, function(x) !all(is.na(x)))
   if (sum(row_has_data) < nrow(sample_matrix)) {
     debug_print(paste("Removing", sum(!row_has_data), "samples with no data"))
@@ -3143,19 +3118,18 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     sample_metadata <- sample_metadata[row_has_data, , drop = FALSE]
   }
   
-  # Impute remaining NAs with column means - vectorized approach
+  #impute NAs with column means (vectorized)
   debug_print("Imputing missing values")
   col_means <- colMeans(sample_matrix, na.rm = TRUE)
   na_matrix <- is.na(sample_matrix)
   imputed_count <- sum(na_matrix)
   
-  # Vectorized imputation using column means
   for (j in which(colSums(na_matrix) > 0)) {
     sample_matrix[na_matrix[, j], j] <- col_means[j]
   }
   debug_print(paste("Imputed", imputed_count, "missing values with column means"))
   
-  # Remove any columns that are all NA after imputation
+  #remove all-NA columns
   valid_cols <- !is.na(col_means)
   sample_matrix <- sample_matrix[, valid_cols, drop = FALSE]
   
@@ -3880,9 +3854,9 @@ create_ortholog_table <- function(gene_mapping, config = NULL) {
   return(dt)
 }
 
-# Ridgeline plot functions - optimized with list collection
+#ridgeline plot (optimized with list collection)
 create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE) {
-  # Prepare data using list collection (much faster than repeated rbind)
+  #preallocate list for faster data collection
   data_list <- vector("list", length = sum(sapply(species_data_list, function(x) {
     sample_info <- if("sample_info" %in% names(x)) x$sample_info else x[[paste0(names(species_data_list)[1], "_sample_info")]]
     nrow(sample_info)
@@ -3897,20 +3871,17 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE) {
                           "kl" = "K. lactis",
                           "ca" = "C. albicans")
     
-    # Extract expression data and sample info - handle different naming conventions
     expr_matrix <- if(species_id == "cg") species_data$lcpm else species_data[[paste0(species_id, "_lcpm")]]
     sample_info <- if(species_id == "cg") species_data$sample_info else species_data[[paste0(species_id, "_sample_info")]]
     
-    # For each sample, extract expression values and collect in list
     for (i in 1:nrow(sample_info)) {
       sample_name <- sample_info$Sample[i]
       timepoint <- sample_info$Timepoint[i]
       replicate <- sample_info$Replicate[i]
       
-      # Get expression values for this sample
       expr_values <- expr_matrix[, sample_name]
       
-      # Store in list (faster than rbind in loop)
+      #collect in list (faster than rbind)
       data_list[[list_idx]] <- data.table(
         Species = species_name,
         Timepoint = timepoint,
@@ -3921,7 +3892,7 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE) {
     }
   }
   
-  # Combine all at once using rbindlist (highly optimized)
+  #combine using rbindlist
   all_density_data <- rbindlist(data_list[1:(list_idx-1)])
   
   # Convert timepoint to factor to preserve order
@@ -3963,9 +3934,8 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE) {
   return(p)
 }
 
-# Function to create gene count threshold plots - optimized with list collection
+#gene count threshold plot (optimized)
 create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark_mode = FALSE) {
-  # Pre-allocate list for results
   count_list <- list()
   list_idx <- 1
   
@@ -3977,22 +3947,18 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
                           "kl" = "K. lactis",
                           "ca" = "C. albicans")
     
-    # Extract expression data and sample info - handle different naming conventions
     expr_matrix <- if(species_id == "cg") species_data$lcpm else species_data[[paste0(species_id, "_lcpm")]]
     sample_info <- if(species_id == "cg") species_data$sample_info else species_data[[paste0(species_id, "_sample_info")]]
     
-    # For each sample, count genes above threshold
     for (i in 1:nrow(sample_info)) {
       sample_name <- sample_info$Sample[i]
       timepoint <- sample_info$Timepoint[i]
       replicate <- sample_info$Replicate[i]
       
-      # Get expression values and count those above threshold
       expr_values <- expr_matrix[, sample_name]
       genes_above <- sum(expr_values > threshold)
       percent_above <- (genes_above / length(expr_values)) * 100
       
-      # Store in list (faster than rbind in loop)
       count_list[[list_idx]] <- data.table(
         Species = species_name,
         Timepoint = timepoint,
@@ -4004,7 +3970,6 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
     }
   }
   
-  # Combine all at once using rbindlist (highly optimized)
   count_data <- rbindlist(count_list)
   
   # Convert timepoint to factor to preserve order
@@ -4289,31 +4254,28 @@ load_gene_tree <- function(og_id, current_data = NULL) {
   return(NULL)
 }
 
-# Add this new function to create a formatted orthogroup table - optimized
+#create formatted orthogroup table (optimized)
 create_orthogroup_details_table <- function(query_result) {
   if (is.null(query_result) || is.null(query_result$genes_by_species)) {
     return(NULL)
   }
   
-  # Collect all gene information using list collection (faster than rbind)
+  #collect gene info using list collection
   gene_list <- lapply(names(query_result$genes_by_species), function(sp) {
     genes_df <- query_result$genes_by_species[[sp]]
     if (nrow(genes_df) > 0) {
       config <- current_species_config()
       species_name <- config[[sp]]$name
       
-      # Add species column
       genes_df$Species <- species_name
       genes_df$SpeciesCode <- sp
       
-      # Select relevant columns
       genes_df[, c("Species", "gene_id", "gene_name", "display"), drop = FALSE]
     } else {
       NULL
     }
   })
   
-  # Remove NULLs and combine
   gene_list <- Filter(Negate(is.null), gene_list)
   if (length(gene_list) == 0) return(NULL)
   
@@ -4342,13 +4304,13 @@ create_orthogroup_details_table <- function(query_result) {
   
   return(dt)
 }
-#new ggtree module for phylo tree (react fixed) - optimized
+#phylo tree plot (optimized)
 create_phylo_tree_plot <- function(tree, orthogroup_genes, orthogroup_id, is_dark_mode = FALSE, current_data = NULL, species_colors = NULL, species_config = NULL) {
   if (is.null(tree)) {
     return(NULL)
   }
   
-  # Create a mapping of gene IDs using list collection (faster than rbind)
+  #create gene ID mapping using list collection
   mapping_list <- lapply(names(orthogroup_genes), function(sp) {
     if (nrow(orthogroup_genes[[sp]]) > 0) {
       genes_df <- orthogroup_genes[[sp]]
@@ -6312,17 +6274,14 @@ server <- function(input, output, session) {
   is_dark <- reactiveVal(FALSE)
   containers_update_needed <- reactiveVal(TRUE)
   
-  # Centralized container management function
+  #centralized container management
   manage_combined_containers <- function(config) {
-    # Clear ALL existing containers first
     removeUI("#combined_orthogroup_selection_wrapper > *", multiple = TRUE, immediate = TRUE)
     
-    # Clear tracking
     for (sp_id in names(reactiveValuesToList(existing_containers))) {
       existing_containers[[sp_id]] <- NULL
     }
     
-    # Add containers for current configuration (no blocking sleep needed with immediate = TRUE)
     for (sp_id in names(config)) {
       if (is.null(existing_containers[[sp_id]])) {
         insertUI(
@@ -6708,16 +6667,16 @@ server <- function(input, output, session) {
     do.call(tagList, upload_inputs)
   })
 
-  # Data source toggle
-  data_source <- reactiveVal("default")  # "default" or "custom"
+  #data source toggle
+  data_source <- reactiveVal("default")
   
-  # Clear performance cache when data source changes
+  #clear cache when data source changes
   observeEvent(data_source(), {
     clear_performance_cache()
-    debug_print("Performance cache cleared due to data source change")
+    debug_print("Performance cache cleared")
   }, ignoreInit = TRUE)
   
-  # Function to get the appropriate all_species_data
+  #get appropriate species data
   get_all_species_data <- reactive({
     if (data_source() == "custom" && !is.null(upload_state$custom_all_species_data)) {
       return(upload_state$custom_all_species_data)
@@ -7074,15 +7033,14 @@ server <- function(input, output, session) {
   observeEvent(input$run_pca, {
     waiter_show(html = loading_screen)
     
-    # Debug output (only when DEBUG_MODE is TRUE)
-    debug_cat("Debug: PCA type selected:", input$pca_type, "\n")
+    debug_cat("PCA type:", input$pca_type, "\n")
     if (input$pca_type == "multi") {
-      debug_cat("Debug: Aggregation method:", input$hog_aggregation_method, "\n")
+      debug_cat("Aggregation method:", input$hog_aggregation_method, "\n")
     }
     
     tryCatch({
       if (input$pca_type == "single") {
-        debug_cat("Debug: Entering single-species PCA branch\n")
+        debug_cat("Single-species PCA\n")
         species_data <- get_species_data(input$pca_species)
         
         #get expression matrix based on transformation
@@ -7115,7 +7073,7 @@ server <- function(input, output, session) {
         })
         
       } else {
-        debug_cat("Debug: Entering multi-species PCA branch\n")
+        debug_cat("Multi-species PCA\n")
         #multi-species PCA with selected aggregation method
         aggregation_method <- if (!is.null(input$hog_aggregation_method)) {
           input$hog_aggregation_method
@@ -7183,7 +7141,7 @@ server <- function(input, output, session) {
       }
       
     }, error = function(e) {
-      debug_cat("Debug: Error occurred:", e$message, "\n")
+      debug_cat("PCA error:", e$message, "\n")
       showNotification(
         paste("Error in PCA analysis:", e$message),
         type = "error",
@@ -9914,14 +9872,14 @@ server <- function(input, output, session) {
           expr_data$Gene <- NULL
         }
       }
-      # Debug output (only when DEBUG_MODE is TRUE)
+      #debug output
       if (!is.null(expr_data) && DEBUG_MODE) {
         debug_print(paste("Species:", species_name))
         debug_print(paste("Columns:", paste(names(expr_data), collapse=", ")))
         debug_print(paste("Column types:", paste(sapply(expr_data, class), collapse=", ")))
-        debug_print(paste("First few row names (gene IDs):", paste(head(rownames(expr_data), 3), collapse=", ")))
+        debug_print(paste("First rownames:", paste(head(rownames(expr_data), 3), collapse=", ")))
         debug_print(paste("Dimensions:", nrow(expr_data), "x", ncol(expr_data)))
-        debug_print(paste("All columns numeric?", all(sapply(expr_data, is.numeric))))
+        debug_print(paste("All numeric?", all(sapply(expr_data, is.numeric))))
       }
       
       # NEW: Process gene IDs before validation
