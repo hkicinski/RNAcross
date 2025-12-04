@@ -2,6 +2,7 @@
 Misc/
 rsconnect/
 test_timecourse_data/
+data/cache/
 
 # R files
 .Rhistory
@@ -17,4 +18,7 @@ temp/
 # OS files
 .DS_Store
 Thumbs.db
+
+.Rproj.user
+
 

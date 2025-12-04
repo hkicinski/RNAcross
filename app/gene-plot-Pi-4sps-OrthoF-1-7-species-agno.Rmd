@@ -10,7 +10,7 @@ output:
     css: styles.css
 runtime: shiny
 resource_files:
-  - www/rnacross-prominent-rna-logo-interactive.svg
+  - ../www/rnacross-prominent-rna-logo-interactive.svg
 ---
 
 <style type="text/css">
@@ -265,6 +265,7 @@ suppressMessages({
   library(tidyverse)
   library(data.table)
   library(cowplot)
+  library(tidyr)
   
   # Shiny-related
   library(shiny)
@@ -282,10 +283,11 @@ suppressMessages({
   library(treeio)
   library(data.table)
   library(RColorBrewer)
+  library(here)
 })
 
 # Load the new RData file with HOG-based orthogroups
-load("RData_perSpecies_HOG_clean_08292025_gene_lookup_tree.RData")
+load(file.path("..", "data", "RData_perSpecies_HOG_clean_08292025_gene_lookup_tree.RData"))
 
 if (!is.null(all_species_data$gene_lookup)) {
   if (!is.data.table(all_species_data$gene_lookup)) {
@@ -863,6 +865,71 @@ custom_css <- tags$style(HTML("
     max-width: 1400px;
     margin: 0 auto;
     min-height: calc(100vh - 200px);
+  }
+  
+  /* Cross-Species Ortholog Analysis styles */
+  .ortholog-analysis-panel {
+    background-color: var(--bs-body-bg);
+    border: 2px solid var(--bs-primary);
+    border-radius: 8px;
+    padding: 15px;
+    margin: 15px 0;
+  }
+  
+  [data-bs-theme='dark'] .ortholog-analysis-panel {
+    background-color: #2c3034;
+    border-color: #375a7f;
+  }
+  
+  .coverage-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    margin: 2px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+  }
+  
+  .coverage-badge.high {
+    background-color: #d4edda;
+    color: #155724;
+  }
+  
+  .coverage-badge.medium {
+    background-color: #fff3cd;
+    color: #856404;
+  }
+  
+  .coverage-badge.low {
+    background-color: #f8d7da;
+    color: #721c24;
+  }
+  
+  [data-bs-theme='dark'] .coverage-badge.high {
+    background-color: #1e4620;
+    color: #a3d9a5;
+  }
+  
+  [data-bs-theme='dark'] .coverage-badge.medium {
+    background-color: #664d03;
+    color: #ffc107;
+  }
+  
+  [data-bs-theme='dark'] .coverage-badge.low {
+    background-color: #58151c;
+    color: #f1aeb5;
+  }
+  
+  .ortholog-summary-box {
+    background-color: #f8f9fa;
+    border-left: 4px solid var(--bs-primary);
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+  }
+  
+  [data-bs-theme='dark'] .ortholog-summary-box {
+    background-color: #2c3034;
   }
   
   .query-panel {
@@ -1500,59 +1567,50 @@ extract_orthology_for_genes <- function(gene_list, all_species_data = NULL, conf
   }
   ortholog_gene_map <- list()
   
-  # Get gene lookup table directly - more efficient
-  lookup_table <- all_species_data$gene_lookup
-  
   cat("DEBUG: Searching for genes:", paste(gene_list, collapse=", "), "\n")
   
   for (gene in gene_list) {
     gene_found <- FALSE
     gene_upper <- toupper(trimws(gene))
     
-    # Search in gene lookup table directly
-    matches <- lookup_table[toupper(gene_id) == gene_upper | toupper(gene_name) == gene_upper]
-    
-    cat("DEBUG: Gene", gene, "found", nrow(matches), "matches in lookup table\n")
-    
-    if (nrow(matches) > 0) {
-      # Get the HOG for this gene
-      first_match <- matches[1,]
-      hog_id <- first_match$hog_id
+    #use existing query_gene_flexible like Combined View does
+    query_result <- NULL
+    for (sp_id in names(config)) {
+      sp_data <- list(
+        lcpm = if(!is.null(all_species_data[[sp_id]]$lcpm)) all_species_data[[sp_id]]$lcpm else all_species_data[[sp_id]][[paste0(sp_id, "_lcpm")]],
+        anno = if(!is.null(all_species_data[[sp_id]]$anno)) all_species_data[[sp_id]]$anno else all_species_data[[sp_id]][[paste0(sp_id, "_anno")]],
+        sample_info = if(!is.null(all_species_data[[sp_id]]$sample_info)) all_species_data[[sp_id]]$sample_info else all_species_data[[sp_id]][[paste0(sp_id, "_sample_info")]]
+      )
       
-      cat("DEBUG: Gene", gene, "belongs to HOG:", hog_id, "\n")
+      result <- query_gene_flexible(gene, sp_data, all_species_data)
+      if (!is.null(result) && result$source != "none") {
+        query_result <- result
+        gene_found <- TRUE
+        break
+      }
+    }
+    
+    if (!is.null(query_result) && !is.null(query_result$genes_by_species)) {
+      #build entry with all genes from orthogroup
+      gene_entry <- list(original = gene)
       
-      if (!is.na(hog_id) && hog_id != "") {
-        # Get all genes in this HOG
-        hog_members <- lookup_table[hog_id == hog_id]
-        
-        # Build entry for this specific gene
-        gene_entry <- list(original = gene)
-        
-        for (sp_code in names(config)) {
-          sp_genes <- hog_members[species == sp_code]
-          if (nrow(sp_genes) > 0) {
-            # Find the best match for this species
-            # First try exact match to the query gene
-            exact_match <- sp_genes[toupper(gene_id) == gene_upper | toupper(gene_name) == gene_upper]
-            if (nrow(exact_match) > 0) {
-              gene_entry[[sp_code]] <- exact_match$gene_id[1]
-            } else {
-              # Use first gene from this species in the HOG
-              gene_entry[[sp_code]] <- sp_genes$gene_id[1]
-            }
+      for (sp_code in names(config)) {
+        if (sp_code %in% names(query_result$genes_by_species)) {
+          sp_genes_df <- query_result$genes_by_species[[sp_code]]
+          if (!is.null(sp_genes_df) && nrow(sp_genes_df) > 0) {
+            gene_entry[[sp_code]] <- sp_genes_df$gene_id
           } else {
             gene_entry[[sp_code]] <- NULL
           }
+        } else {
+          gene_entry[[sp_code]] <- NULL
         }
-        
-        ortholog_gene_map[[length(ortholog_gene_map) + 1]] <- gene_entry
-        gene_found <- TRUE
-        
-        cat("DEBUG: Mapped", gene, "to:", 
-            paste(sapply(names(config), function(s) paste0(s, "=", gene_entry[[s]])), collapse=", "), "\n")
-      } else {
-        cat("DEBUG: No HOG found for gene", gene, "\n")
       }
+      
+      ortholog_gene_map[[length(ortholog_gene_map) + 1]] <- gene_entry
+      
+      cat("DEBUG: Mapped", gene, "to orthogroup", query_result$orthogroup, "with",
+          sum(sapply(gene_entry[names(config)], length)), "total genes\n")
     }
     
     if (!gene_found) {
@@ -1560,12 +1618,278 @@ extract_orthology_for_genes <- function(gene_list, all_species_data = NULL, conf
     }
   }
   
-  cat("DEBUG: Total genes mapped:", length(ortholog_gene_map), "\n")
+  cat("DEBUG: Total input genes mapped:", length(ortholog_gene_map), "\n")
   
   return(ortholog_gene_map)
 }
+#aggregate gene expression to species means
+aggregate_to_species_mean <- function(plot_data) {
+  #calculate mean and SE per species per timepoint
+  aggregated <- plot_data %>%
+    group_by(Species, Timepoint, Replicate) %>%
+    summarise(
+      Expression = mean(Expression, na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    mutate(Gene = paste0(Species, "_mean"))
+  
+  return(aggregated)
+}
 
-# Keep all other helper functions unchanged
+#process multiple pathways for comparative heatmap
+process_pathway_comparison <- function(pathway_definitions, species_data_list, config, all_species_data) {
+  pathway_results <- list()
+  
+  cat("DEBUG: Processing", length(pathway_definitions), "pathways\n")
+  
+  for (pathway_name in names(pathway_definitions)) {
+    gene_list <- pathway_definitions[[pathway_name]]
+    cat("DEBUG: Processing pathway:", pathway_name, "with", length(gene_list), "genes\n")
+    
+    #map genes to orthologs
+    gene_mapping <- extract_orthology_for_genes(gene_list, all_species_data, config)
+    
+    if (is.null(gene_mapping) || length(gene_mapping) == 0) {
+      cat("WARNING: No orthologs found for pathway:", pathway_name, "\n")
+      next
+    }
+    
+    cat("DEBUG: Mapped", length(gene_mapping), "genes for pathway:", pathway_name, "\n")
+    
+    #extract expression data
+    pathway_expr <- process_multi_species_gene_set(gene_mapping, species_data_list, config)
+    
+    if (is.null(pathway_expr) || nrow(pathway_expr) == 0) {
+      cat("WARNING: No expression data for pathway:", pathway_name, "\n")
+      next
+    }
+    
+    #calculate mean expression per species per timepoint
+    pathway_summary <- pathway_expr %>%
+      group_by(Species, Timepoint) %>%
+      summarise(
+        MeanExpression = mean(Expression, na.rm = TRUE),
+        SEExpression = sd(Expression, na.rm = TRUE) / sqrt(n()),
+        NGenes = n_distinct(Gene),
+        .groups = 'drop'
+      ) %>%
+      mutate(Pathway = pathway_name)
+    
+    pathway_results[[pathway_name]] <- pathway_summary
+  }
+  
+  if (length(pathway_results) == 0) {
+    return(NULL)
+  }
+  
+  #combine all pathway data
+  combined_data <- do.call(rbind, pathway_results)
+  return(combined_data)
+}
+
+#calculate fold-change from baseline (t=0) for pathway heatmap
+calculate_pathway_foldchange <- function(pathway_data) {
+  #ensure timepoint is a factor with correct order
+  pathway_data$Timepoint <- factor(pathway_data$Timepoint, levels = TIME_POINTS)
+  
+  #calculate fold-change per pathway per species
+  fc_data <- pathway_data %>%
+    group_by(Pathway, Species) %>%
+    arrange(Timepoint) %>%
+    mutate(
+      BaselineExpr = MeanExpression[Timepoint == "0min"],
+      FoldChange = MeanExpression - BaselineExpr,
+      Log2FC = FoldChange
+    ) %>%
+    ungroup()
+  
+  return(fc_data)
+}
+
+#create pathway comparison heatmap
+create_pathway_heatmap <- function(pathway_data, value_type = "foldchange", 
+                                   is_dark_mode = FALSE, cluster_pathways = FALSE) {
+  plot_bg_color <- if(is_dark_mode) "#2c3034" else "white"
+  text_color <- if(is_dark_mode) "white" else "black"
+  
+  #prepare data based on value type
+  if (value_type == "foldchange") {
+    heatmap_data <- calculate_pathway_foldchange(pathway_data)
+    value_col <- "Log2FC"
+    colorbar_title <- "log2 Fold-Change"
+    zmid_val <- 0
+    zmin_val <- -3
+    zmax_val <- 3
+  } else {
+    heatmap_data <- pathway_data
+    value_col <- "MeanExpression"
+    colorbar_title <- "Mean log2 CPM"
+    zmid_val <- NULL
+    zmin_val <- NULL
+    zmax_val <- NULL
+  }
+  
+  #get all unique pathways and species
+  all_pathways <- unique(heatmap_data$Pathway)
+  species_list <- unique(heatmap_data$Species)
+  n_species <- length(species_list)
+  n_pathways <- length(all_pathways)
+  
+  cat("DEBUG: Found", n_pathways, "pathways:", paste(all_pathways, collapse=", "), "\n")
+  cat("DEBUG: Found", n_species, "species:", paste(species_list, collapse=", "), "\n")
+  
+  #optional clustering of pathways (globally across all species)
+  pathway_order <- all_pathways
+  if (cluster_pathways && n_pathways > 1) {
+    #create average expression matrix for clustering
+    avg_matrix <- heatmap_data %>%
+      group_by(Pathway, Timepoint) %>%
+      summarise(AvgValue = mean(get(value_col), na.rm = TRUE), .groups = 'drop') %>%
+      pivot_wider(names_from = Timepoint, values_from = AvgValue) %>%
+      column_to_rownames("Pathway") %>%
+      as.matrix()
+    
+    if (nrow(avg_matrix) > 1) {
+      row_dist <- dist(avg_matrix)
+      row_hc <- hclust(row_dist)
+      pathway_order <- rownames(avg_matrix)[row_hc$order]
+    }
+  }
+  
+  #create subplot list
+  subplot_list <- list()
+  annotations <- list()
+  
+  for (i in 1:n_species) {
+    sp <- species_list[i]
+    sp_data <- heatmap_data %>% filter(Species == sp)
+    
+    #create matrix: pathways x timepoints with consistent ordering
+    heat_matrix <- sp_data %>%
+      select(Pathway, Timepoint, all_of(value_col)) %>%
+      pivot_wider(names_from = Timepoint, values_from = all_of(value_col))
+    
+    #ensure all pathways are present (fill with NA if missing)
+    for (pw in pathway_order) {
+      if (!pw %in% heat_matrix$Pathway) {
+        new_row <- data.frame(Pathway = pw, stringsAsFactors = FALSE)
+        for (tp in TIME_POINTS) {
+          new_row[[tp]] <- NA
+        }
+        heat_matrix <- rbind(heat_matrix, new_row)
+      }
+    }
+    
+    #order by pathway_order
+    heat_matrix <- heat_matrix %>%
+      arrange(match(Pathway, pathway_order)) %>%
+      column_to_rownames("Pathway") %>%
+      as.matrix()
+    
+    #reorder rows to match pathway_order
+    heat_matrix <- heat_matrix[pathway_order, ]
+    
+    #create heatmap with shared colorscale
+    p <- plot_ly(
+      z = heat_matrix,
+      x = colnames(heat_matrix),
+      y = rownames(heat_matrix),
+      type = "heatmap",
+      colorscale = list(
+        list(0, "#2166AC"),
+        list(0.5, "#F7F7F7"),
+        list(1, "#B2182B")
+      ),
+      zmid = zmid_val,
+      zmin = zmin_val,
+      zmax = zmax_val,
+      showscale = (i == 1),
+      hoverinfo = "text",
+      text = matrix(
+        paste(
+          "Species:", sp,
+          "<br>Pathway:", rep(rownames(heat_matrix), each = ncol(heat_matrix)),
+          "<br>Timepoint:", rep(colnames(heat_matrix), times = nrow(heat_matrix)),
+          "<br>Value:", round(as.vector(t(heat_matrix)), 2)
+        ),
+        nrow = nrow(heat_matrix),
+        ncol = ncol(heat_matrix),
+        byrow = TRUE
+      ),
+      colorbar = if(i == 1) {
+        list(
+          title = colorbar_title,
+          len = 0.85,
+          thickness = 20,
+          x = -0.15,
+          y = 0.5
+        )
+      } else NULL
+    )
+    
+    p <- p %>% layout(
+      xaxis = list(
+        title = "",
+        tickangle = -45,
+        tickfont = list(size = 9),
+        showticklabels = TRUE,
+        side = "bottom"
+      ),
+      yaxis = list(
+        title = "",
+        autorange = "reversed",
+        tickfont = list(size = 10),
+        showticklabels = (i == 1 || i == 3)
+      ),
+      plot_bgcolor = plot_bg_color,
+      paper_bgcolor = plot_bg_color,
+      font = list(color = text_color),
+      margin = list(l = if(i == 1 || i == 3) 120 else 20, r = 20, t = 50, b = 80)
+    )
+    
+    subplot_list[[i]] <- p
+    
+    #add species label annotation
+    annotations[[i]] <- list(
+      text = paste0("<b>", sp, "</b>"),
+      xref = "paper",
+      yref = "paper",
+      x = if(i == 1 || i == 3) 0.24 else 0.74,
+      y = if(i <= 2) 0.98 else 0.48,
+      xanchor = "center",
+      yanchor = "top",
+      showarrow = FALSE,
+      font = list(size = 14, color = text_color)
+    )
+  }
+  
+  #combine into 2x2 grid
+  combined_plot <- subplot(
+    subplot_list,
+    nrows = 2,
+    shareX = FALSE,
+    shareY = FALSE,
+    margin = 0.08,
+    heights = c(0.5, 0.5)
+  )
+  
+  combined_plot <- combined_plot %>% layout(
+    title = list(
+      text = paste("Pathway Comparison Across Species -", 
+                   ifelse(value_type == "foldchange", "Fold-Change from Baseline", "Absolute Expression")),
+      font = list(size = 16, color = text_color),
+      y = 0.98
+    ),
+    annotations = annotations,
+    showlegend = FALSE,
+    plot_bgcolor = plot_bg_color,
+    paper_bgcolor = plot_bg_color,
+    font = list(color = text_color)
+  )
+  
+  return(combined_plot)
+}
+
 # group visualization
 create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE,
                                      distance_method = "pearson", 
@@ -3582,9 +3906,298 @@ create_orthogroup_summary <- function(query_result, config = NULL) {
   
   return(summary_html)
 }
+
+#calculates ortholog coverage statistics for gene set analysis
+calculate_ortholog_coverage <- function(gene_mapping, config) {
+  if (is.null(gene_mapping) || length(gene_mapping) == 0) {
+    return(NULL)
+  }
+  
+  total_genes <- length(gene_mapping)
+  coverage_stats <- list()
+  
+  for (sp_code in names(config)) {
+    #count how many input genes have orthologs in this species
+    genes_with_orthologs <- sum(sapply(gene_mapping, function(gene_map) {
+      !is.null(gene_map[[sp_code]]) && length(gene_map[[sp_code]]) > 0
+    }))
+    
+    #get unique ortholog genes (de-duplicate across orthogroups)
+    all_orthologs <- unique(unlist(sapply(gene_mapping, function(gene_map) {
+      gene_map[[sp_code]]
+    })))
+    
+    total_orthologs <- length(all_orthologs)
+    
+    #count paralogs (genes beyond 1 per orthogroup)
+    paralog_count <- sum(sapply(gene_mapping, function(gene_map) {
+      max(0, length(gene_map[[sp_code]]) - 1)
+    }))
+    
+    coverage_pct <- round((genes_with_orthologs / total_genes) * 100, 1)
+    
+    coverage_stats[[sp_code]] <- list(
+      species_name = config[[sp_code]]$short,
+      genes_found = genes_with_orthologs,
+      total_orthologs = total_orthologs,
+      paralog_count = paralog_count,
+      total_genes = total_genes,
+      coverage_pct = coverage_pct,
+      coverage_class = if(coverage_pct >= 80) "high" else if(coverage_pct >= 50) "medium" else "low"
+    )
+  }
+  
+  return(coverage_stats)
+}
+
+#ortholog table for gene set analysis
+create_ortholog_mapping_table <- function(gene_mapping, config) {
+  if (is.null(gene_mapping) || length(gene_mapping) == 0) {
+    return(NULL)
+  }
+  
+  #build expanded data frame showing ALL paralogs
+  rows_list <- list()
+  
+  for (gene_map in gene_mapping) {
+    input_gene <- gene_map$original
+    
+    #get max number of paralogs across species for this gene
+    max_paralogs <- max(sapply(names(config), function(sp_code) {
+      orthologs <- gene_map[[sp_code]]
+      if (is.null(orthologs)) 0 else length(orthologs)
+    }), na.rm = TRUE)
+    
+    #create one row per paralog position
+    for (i in 1:max_paralogs) {
+      row_data <- list(InputGene = if(i == 1) input_gene else "")
+      
+      for (sp_code in names(config)) {
+        col_name <- paste0(config[[sp_code]]$short, "_Ortholog")
+        orthologs <- gene_map[[sp_code]]
+        
+        if (is.null(orthologs) || length(orthologs) == 0) {
+          row_data[[col_name]] <- if(i == 1) "-" else ""
+        } else if (i <= length(orthologs)) {
+          #show paralog with indicator if multiple exist
+          if (length(orthologs) == 1) {
+            row_data[[col_name]] <- orthologs[i]
+          } else {
+            row_data[[col_name]] <- paste0(orthologs[i], " [", i, "/", length(orthologs), "]")
+          }
+        } else {
+          row_data[[col_name]] <- ""
+        }
+      }
+      
+      rows_list[[length(rows_list) + 1]] <- as.data.frame(row_data, stringsAsFactors = FALSE)
+    }
+  }
+  
+  mapping_df <- do.call(rbind, rows_list)
+  return(mapping_df)
+}
+
+# Process gene set for multi-species ortholog analysis
+process_multi_species_gene_set <- function(gene_mapping, species_data_list, config) {
+  all_expression_data <- list()
+  
+  for (gene_map in gene_mapping) {
+    input_gene <- gene_map$original
+    
+    for (sp_code in names(config)) {
+      if (!is.null(gene_map[[sp_code]]) && length(gene_map[[sp_code]]) > 0) {
+        # Get species data
+        sp_data <- species_data_list[[sp_code]]
+        if (is.null(sp_data)) next
+        
+        # Get expression matrix
+        lcpm_matrix <- if (!is.null(sp_data$lcpm)) {
+          sp_data$lcpm
+        } else {
+          sp_data[[paste0(sp_code, "_lcpm")]]
+        }
+        
+        # Get sample info
+        sample_info <- if (!is.null(sp_data$sample_info)) {
+          sp_data$sample_info
+        } else {
+          sp_data[[paste0(sp_code, "_sample_info")]]
+        }
+        
+        if (is.null(lcpm_matrix) || is.null(sample_info)) next
+        
+        # For each ortholog in this species
+        for (gene_id in gene_map[[sp_code]]) {
+          # Handle K. lactis underscore format
+          gene_id_to_use <- gene_id
+          if (sp_code == "kl" && !gene_id %in% rownames(lcpm_matrix)) {
+            gene_id_alt <- gsub("^(KLLA0)(.*)", "\\1_\\2", gene_id)
+            if (gene_id_alt %in% rownames(lcpm_matrix)) {
+              gene_id_to_use <- gene_id_alt
+            }
+          }
+          
+          if (gene_id_to_use %in% rownames(lcpm_matrix)) {
+            expr_df <- data.frame(
+              Gene = input_gene,
+              GeneID = gene_id,
+              Species = config[[sp_code]]$short,
+              SpeciesCode = sp_code,
+              Timepoint = factor(sample_info$Timepoint, levels = TIME_POINTS),
+              Replicate = sample_info$Replicate,
+              Expression = as.numeric(lcpm_matrix[gene_id_to_use, ]),
+              stringsAsFactors = FALSE
+            )
+            
+            all_expression_data[[length(all_expression_data) + 1]] <- expr_df
+          }
+        }
+      }
+    }
+  }
+  
+  if (length(all_expression_data) > 0) {
+    return(do.call(rbind, all_expression_data))
+  } else {
+    return(NULL)
+  }
+}
 ```
 
 ```{r ui_definition, echo=FALSE}
+#capture current session state
+capture_session_state <- function(selected_genes, query_results, global_query_state, combined_selections, input) {
+  list(
+    version = "1.0",
+    timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC"),
+    selected_genes = reactiveValuesToList(selected_genes),
+    query_results = reactiveValuesToList(query_results),
+    current_query = global_query_state$current_query,
+    combined_selections = reactiveValuesToList(combined_selections),
+    gene_list = input$gene_list,
+    enable_ortholog_analysis = input$enable_ortholog_analysis,
+    current_tab = input$nav
+  )
+}
+
+restore_session_state <- function(state, selected_genes, query_results, global_query_state, combined_selections, ortholog_state, session) {
+  tryCatch({
+    if (!is.null(state$selected_genes)) {
+      for (sp in names(state$selected_genes)) {
+        selected_genes[[sp]] <- state$selected_genes[[sp]]
+      }
+    }
+    
+    if (!is.null(state$query_results)) {
+      for (sp in names(state$query_results)) {
+        query_results[[sp]] <- state$query_results[[sp]]
+      }
+    }
+    
+    if (!is.null(state$current_query)) {
+      global_query_state$current_query <- state$current_query
+    }
+    
+    if (!is.null(state$combined_selections)) {
+      for (sp in names(state$combined_selections)) {
+        combined_selections[[sp]] <- state$combined_selections[[sp]]
+      }
+    }
+    
+    #restore gene group analysis inputs with delay to ensure UI is ready
+    if (!is.null(state$gene_list)) {
+      tryCatch({
+        updateTextAreaInput(session, "gene_list", value = state$gene_list)
+      }, error = function(e) {
+        message("could not restore gene_list: ", e$message)
+      })
+    }
+    
+    if (!is.null(state$enable_ortholog_analysis)) {
+      tryCatch({
+        updateCheckboxInput(session, "enable_ortholog_analysis", value = state$enable_ortholog_analysis)
+      }, error = function(e) {
+        message("could not restore enable_ortholog_analysis: ", e$message)
+      })
+    }
+    
+    if (!is.null(state$group_analysis_species)) {
+      tryCatch({
+        updateSelectInput(session, "group_analysis_species", selected = state$group_analysis_species)
+      }, error = function(e) {
+        message("could not restore group_analysis_species: ", e$message)
+      })
+    }
+    
+    if (!is.null(state$group_viz_type)) {
+      tryCatch({
+        updateSelectInput(session, "group_viz_type", selected = state$group_viz_type)
+      }, error = function(e) {
+        message("could not restore group_viz_type: ", e$message)
+      })
+    }
+    
+    if (!is.null(state$distance_method)) {
+      tryCatch({
+        updateSelectInput(session, "distance_method", selected = state$distance_method)
+      }, error = function(e) {
+        message("could not restore distance_method: ", e$message)
+      })
+    }
+    
+    if (!is.null(state$data_transform)) {
+      tryCatch({
+        updateSelectInput(session, "data_transform", selected = state$data_transform)
+      }, error = function(e) {
+        message("could not restore data_transform: ", e$message)
+      })
+    }
+    
+    if (!is.null(state$aggregation_level)) {
+      tryCatch({
+        updateRadioButtons(session, "aggregation_level", selected = state$aggregation_level)
+      }, error = function(e) {
+        message("could not restore aggregation_level: ", e$message)
+      })
+    }
+    
+    #do NOT restore ortholog_state$mapped
+    
+    if (!is.null(state$ortholog_selected)) {
+      tryCatch({
+        ortholog_state$selected_orthologs <- state$ortholog_selected
+      }, error = function(e) {
+        message("could not restore ortholog_selected: ", e$message)
+      })
+    }
+    
+    #restore current tab
+    if (!is.null(state$current_tab)) {
+      tryCatch({
+        updateNavbarPage(session, "nav", selected = state$current_tab)
+      }, error = function(e) {
+        message("could not restore current_tab: ", e$message)
+      })
+    }
+  }, error = function(e) {
+    message("error in restore_session_state: ", e$message)
+  })
+}
+
+#format time ago for display
+format_time_ago <- function(timestamp) {
+  if (is.null(timestamp)) return("just now")
+  
+  saved_time <- as.POSIXct(timestamp, format = "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC")
+  diff_secs <- as.numeric(difftime(Sys.time(), saved_time, units = "secs"))
+  
+  if (diff_secs < 60) return("just now")
+  if (diff_secs < 3600) return(paste(round(diff_secs / 60), "minutes ago"))
+  if (diff_secs < 86400) return(paste(round(diff_secs / 3600), "hours ago"))
+  return(paste(round(diff_secs / 86400), "days ago"))
+}
+
 ui <- page_navbar(
   theme = light_theme,  # Start with light theme
   title = NULL,
@@ -3794,7 +4407,7 @@ ui <- page_navbar(
         id = "splash-logo",
         tags$div(
           id = "svg-wrapper",
-          HTML(paste(readLines("www/rnacross-prominent-rna-logo-interactive.svg", warn = FALSE), collapse = "\n"))
+          HTML(paste(readLines(file.path("..", "www", "rnacross-prominent-rna-logo-interactive.svg"), warn = FALSE), collapse = "\n"))
         )
       ),
       
@@ -4041,7 +4654,52 @@ ui <- page_navbar(
         setTimeout(initializeSplash, 100);
       }
     });
-    '))
+    ')),
+  
+  #localstorage for session persistence
+  tags$script(HTML("
+    //save session to browser localStorage
+    Shiny.addCustomMessageHandler('saveSession', function(session_state) {
+      try {
+        console.log('Saving session state:', session_state);
+        localStorage.setItem('rnacross_session', JSON.stringify(session_state));
+        localStorage.setItem('rnacross_session_timestamp', new Date().toISOString());
+        console.log('Session saved successfully');
+      } catch(e) {
+        console.error('localStorage save failed:', e);
+      }
+    });
+    
+    //load session on app startup
+    $(document).on('shiny:connected', function() {
+      console.log('Shiny connected, checking for saved session');
+      var session_state = localStorage.getItem('rnacross_session');
+      var timestamp = localStorage.getItem('rnacross_session_timestamp');
+      
+      if (session_state) {
+        console.log('Found saved session from:', timestamp);
+        try {
+          Shiny.setInputValue('restore_session', {
+            state: JSON.parse(session_state),
+            saved_at: timestamp
+          }, {priority: 'event'});
+          console.log('Restore signal sent to R');
+        } catch(e) {
+          console.error('Failed to restore session:', e);
+        }
+      } else {
+        console.log('No saved session found');
+      }
+    });
+    
+    //clear session
+    Shiny.addCustomMessageHandler('clearSession', function(msg) {
+      console.log('Clearing session');
+      localStorage.removeItem('rnacross_session');
+      localStorage.removeItem('rnacross_session_timestamp');
+      location.reload();
+    });
+    "))
   ),
   
   # Footer
@@ -4057,25 +4715,25 @@ ui <- page_navbar(
       ),
       p(
         class = "mt-2 mb-0",
-        "Version 2.9 - Updated August 2025"
+        "Version 2.9.1 - Updated November 2025"
       )
     )
   ),
   
   # gene explorer panel:
   nav_panel(
-    title = span(icon("dna"), " Gene Explorer"),
-    value = "gene_explorer",
-    
-    div(
-      class = "gene-explorer-container",
-      style = "padding-bottom: 120px !important;",
+      title = span(icon("dna"), " Gene Explorer"),
+      value = "gene_explorer",
       
-      # Query Panel
       div(
-        class = "query-panel",
-        h3("Gene Query Hub", class = "mb-4"),
-        p("Search for a gene to explore its orthogroup across all species. Your query will be available throughout all analysis tabs."),
+        class = "gene-explorer-container",
+        style = "padding-bottom: 120px !important;",
+        
+        # Query Panel
+        div(
+          class = "query-panel",
+          h3("Gene Query Hub", class = "mb-4"),
+          p("Search for a gene to explore its orthogroup across all species. Your query will be available throughout all analysis tabs."),
         
         fluidRow(
           column(
@@ -4480,44 +5138,193 @@ ui <- page_navbar(
         div(
           class = "sidebar-panel",
           h4("Gene Group Analysis Controls"),
-          fileInput(
-            "gene_group_file",
-            "Upload Gene Groups (CSV)",
-            accept = c("text/csv", ".csv")
+          
+          #pathway comparison mode toggle
+          checkboxInput(
+            "enable_pathway_comparison",
+            label = div(
+              icon("th"),
+              strong(" Multi-Pathway Comparison Mode"),
+              style = "display: inline;"
+            ),
+            value = FALSE
           ),
-          textAreaInput(
-            "gene_list",
-            "Or paste gene list:",
-            rows = 5,
-            placeholder = "Enter genes, one per line"
+          
+          #conditional UI for single vs multi-pathway mode
+          conditionalPanel(
+            condition = "input.enable_pathway_comparison == false",
+            fileInput(
+              "gene_group_file",
+              "Upload Gene Groups (CSV)",
+              accept = c("text/csv", ".csv")
+            ),
+            textAreaInput(
+              "gene_list",
+              "Or paste gene list:",
+              rows = 5,
+              placeholder = "Enter genes, one per line"
+            )
           ),
+          
+          conditionalPanel(
+            condition = "input.enable_pathway_comparison == true",
+            div(
+              class = "alert alert-info py-2 px-3 mb-3",
+              style = "font-size: 0.9em;",
+              icon("info-circle"),
+              strong(" Pathway Format:"),
+              br(),
+              "Pathway Name",
+              br(),
+              "GENE1, GENE2, GENE3",
+              br(),
+              tags$small("Separate pathways with blank line")
+            ),
+            textAreaInput(
+              "pathway_definitions",
+              "Define Pathways:",
+              rows = 15,
+              placeholder = "Ribophagy\nATG11, ATG19, UBI4, RPN4\n\nMitophagy\nATG11, ATG32, ATG33\n\nPexophagy\nATG11, ATG30, ATG36, PEX3"
+            ),
+            fileInput(
+              "pathway_file",
+              "Or upload pathway file:",
+              accept = c("text/plain", ".txt")
+            )
+          ),
+          
+          #cross-species ortholog analysis checkbox
+          div(
+            class = "ortholog-analysis-panel",
+            checkboxInput(
+              "enable_ortholog_analysis",
+              label = div(
+                icon("sitemap"),
+                strong(" Cross-Species Ortholog Analysis"),
+                style = "display: inline;"
+              ),
+              value = FALSE
+            ),
+            div(
+              style = "margin-left: 25px; font-size: 0.9em; color: #6c757d;",
+              "When checked:",
+              tags$ul(
+                style = "margin-top: 5px; margin-bottom: 5px;",
+                tags$li("Maps genes to orthologs across species"),
+                tags$li("Shows coverage badges for each species"),
+                tags$li("Enables multi-species expression comparison")
+              )
+            ),
+            #remap button (only shows when ortholog analysis is enabled)
+            conditionalPanel(
+              condition = "input.enable_ortholog_analysis == true",
+              div(
+                class = "mt-2 mb-2",
+                actionButton(
+                  "remap_orthologs",
+                  "Update Ortholog Mapping",
+                  icon = icon("sync-alt"),
+                  class = "btn btn-warning btn-sm w-100"
+                ),
+                downloadButton(
+                  "download_coverage_stats",
+                  "Download Coverage Stats",
+                  class = "btn btn-secondary btn-sm w-100 mt-2"
+                ),
+                tags$small(
+                  class = "text-muted d-block mt-1",
+                  "Click after changing gene list to refresh mappings"
+                )
+              )
+            ),
+            #ortholog mapping results (appears after mapping)
+            div(
+              id = "ortholog_mapping_results",
+              style = "display: none; margin-top: 10px;",
+              uiOutput("ortholog_coverage_summary"),
+              
+              #paralog selection interface
+              div(
+                class = "mt-3 mb-3 p-3",
+                style = "border: 1px solid #ddd; border-radius: 4px; background-color: #f8f9fa;",
+                h6(icon("check-square"), " Select Orthologs to Plot"),
+                tags$small(class = "text-muted d-block mb-2",
+                           "Choose which orthologs to include in visualization"),
+                uiOutput("paralog_selection_ui"),
+                actionButton(
+                  "select_all_paralogs",
+                  "Select All",
+                  icon = icon("check-double"),
+                  class = "btn btn-sm btn-secondary mt-2 me-2"
+                ),
+                actionButton(
+                  "select_first_paralogs",
+                  "Select First Only",
+                  icon = icon("check"),
+                  class = "btn btn-sm btn-secondary mt-2"
+                )
+              ),
+              
+              actionButton(
+                "view_ortholog_details",
+                "View Detailed Mapping",
+                icon = icon("table"),
+                class = "btn btn-sm btn-info w-100 mt-2"
+              )
+            )
+          ),
+          
           uiOutput("group_analysis_species_ui"),
-          selectInput(
-            "distance_method",
-            "Clustering Method:",
-            choices = list(
-              "Pearson Correlation" = "pearson",
-              "Euclidean" = "euclidean"
+          
+          #conditional controls based on mode
+          conditionalPanel(
+            condition = "input.enable_pathway_comparison == false",
+            selectInput(
+              "distance_method",
+              "Clustering Method:",
+              choices = list(
+                "Pearson Correlation" = "pearson",
+                "Euclidean" = "euclidean"
+              ),
+              selected = "pearson"
             ),
-            selected = "pearson"
-          ),
-          selectInput(
-            "data_transform",
-            "Data Transformation:",
-            choices = list(
-              "Raw log2CPM" = "raw",
-              "Centered log2CPM" = "centered",
-              "Z-score" = "zscore"
+            selectInput(
+              "data_transform",
+              "Data Transformation:",
+              choices = list(
+                "Raw log2CPM" = "raw",
+                "Centered log2CPM" = "centered",
+                "Z-score" = "zscore"
+              ),
+              selected = "centered"
             ),
-            selected = "centered"
+            selectInput(
+              "group_viz_type",
+              "Visualization Type:",
+              choices = list(
+                "Line Plot" = "line",
+                "Bar Chart" = "bar",
+                "Heatmap" = "heatmap"
+              )
+            )
           ),
-          selectInput(
-            "group_viz_type",
-            "Visualization Type:",
-            choices = list(
-              "Line Plot" = "line",
-              "Bar Chart" = "bar",
-              "Heatmap" = "heatmap"
+          
+          #pathway comparison specific controls
+          conditionalPanel(
+            condition = "input.enable_pathway_comparison == true",
+            selectInput(
+              "pathway_value_type",
+              "Heatmap Values:",
+              choices = list(
+                "Fold-Change from Baseline (t=0)" = "foldchange",
+                "Absolute Expression" = "absolute"
+              ),
+              selected = "foldchange"
+            ),
+            checkboxInput(
+              "cluster_pathways",
+              "Cluster Pathways",
+              value = FALSE
             )
           ),
           
@@ -4579,6 +5386,20 @@ ui <- page_navbar(
             )
           ),
           
+          #aggregation level control (only shown when ortholog analysis is enabled)
+          conditionalPanel(
+            condition = "input.enable_ortholog_analysis == true",
+            radioButtons(
+              "aggregation_level",
+              "Aggregation Level:",
+              choices = list(
+                "Individual genes" = "genes",
+                "Mean per species" = "species_mean"
+              ),
+              selected = "genes"
+            )
+          ),
+          
           actionButton(
             "analyze_gene_groups",
             "Generate Visualization",
@@ -4589,6 +5410,14 @@ ui <- page_navbar(
             "download_group_plot",
             "Download Plot",
             class = "btn btn-secondary mt-2 w-100"
+          ),
+          conditionalPanel(
+            condition = "input.enable_pathway_comparison == true",
+            downloadButton(
+              "download_pathway_data",
+              "Download Pathway Data",
+              class = "btn btn-secondary mt-2 w-100"
+            )
           )
         )
       ),
@@ -4887,8 +5716,13 @@ server <- function(input, output, session) {
       selected = names(config)[1]
     )
   })
-  # Generate dynamic species menu
+  # Generate dynamic species menu (hidden in cross-species mode)
   output$group_analysis_species_ui <- renderUI({
+    #hide when cross-species ortholog analysis is enabled
+    if (!is.null(input$enable_ortholog_analysis) && input$enable_ortholog_analysis) {
+      return(NULL)
+    }
+    
     config <- current_species_config()
     choices <- setNames(
       names(config),
@@ -4943,6 +5777,16 @@ server <- function(input, output, session) {
     validation_warnings = list(),
     uploaded_data = list(),
     custom_all_species_data = NULL
+  )
+  
+  #ortholog analysis state
+  ortholog_state <- reactiveValues(
+    mapped = FALSE,
+    ortholog_data = NULL,
+    coverage_stats = NULL,
+    gene_mapping = NULL,
+    multi_species_data = NULL,
+    selected_orthologs = list()
   )
   # This manages the user-defined species list
   species_list <- reactiveValues(
@@ -5196,6 +6040,78 @@ server <- function(input, output, session) {
     tree_data = NULL,
     last_search_time = NULL
   )
+  
+  #restore session on startup
+  observeEvent(input$restore_session, {
+    req(input$restore_session)
+    
+    message("restore session triggered")
+    
+    state <- input$restore_session$state
+    saved_at <- input$restore_session$saved_at
+    time_ago <- format_time_ago(saved_at)
+    
+    message(paste("restoring state from", time_ago))
+    message(paste("state contents:", paste(names(state), collapse = ", ")))
+    
+    restore_session_state(state, selected_genes, query_results, global_query_state, combined_selections, session)
+    
+    message("state restored, showing notification")
+    
+    showNotification(
+      ui = tagList(
+        icon("check-circle"),
+        span(paste("Session restored (saved", time_ago, ")")),
+        actionButton(
+          "clear_session_btn",
+          "Start Fresh",
+          class = "btn-sm btn-warning",
+          style = "margin-left: 10px;"
+        )
+      ),
+      duration = 8,
+      type = "message",
+      id = "session_restored"
+    )
+  }, once = TRUE)
+  
+    #auto-save session after changes
+  observe({
+    #force reactivity by converting to list
+    reactiveValuesToList(selected_genes)
+    reactiveValuesToList(query_results)
+    reactiveValuesToList(combined_selections)
+    global_query_state$current_query
+    
+    #also watch input fields
+    input$gene_list
+    input$enable_ortholog_analysis
+    input$nav
+    
+    #delay execution to avoid saving empty initial state
+    invalidateLater(100)
+    
+    isolate({
+      current_state <- list(
+        version = "1.0",
+        timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC"),
+        selected_genes = reactiveValuesToList(selected_genes),
+        query_results = reactiveValuesToList(query_results),
+        current_query = global_query_state$current_query,
+        combined_selections = reactiveValuesToList(combined_selections),
+        gene_list = input$gene_list,
+        enable_ortholog_analysis = input$enable_ortholog_analysis,
+        current_tab = input$nav
+      )
+      session$sendCustomMessage(type = "saveSession", message = current_state)
+    })
+  }) %>% debounce(3000)
+  
+  #handle start fresh button
+  observeEvent(input$clear_session_btn, {
+    session$sendCustomMessage(type = "clearSession", message = list())
+  })
+  
   
   # Helper function to update combined species table
   update_combined_table <- function(query_results, combined_selections, is_dark) {
@@ -6535,6 +7451,355 @@ server <- function(input, output, session) {
     }
   )
   
+  #observer for ortholog mapping when checkbox is toggled
+  observeEvent(input$enable_ortholog_analysis, {
+    if (input$enable_ortholog_analysis) {
+      #get gene list
+      gene_list <- if (!is.null(input$gene_list) && nchar(trimws(input$gene_list)) > 0) {
+        genes <- strsplit(trimws(input$gene_list), "[\n\r]+")[[1]]
+        genes[genes != ""]
+      } else {
+        NULL
+      }
+      
+      if (is.null(gene_list) || length(gene_list) == 0) {
+        showNotification("Please enter a gene list first", type = "warning", duration = 3)
+        updateCheckboxInput(session, "enable_ortholog_analysis", value = FALSE)
+        return()
+      }
+      
+      #perform initial mapping
+      perform_ortholog_mapping(gene_list)
+      
+    } else {
+      #reset when unchecked
+      ortholog_state$mapped <- FALSE
+      ortholog_state$gene_mapping <- NULL
+      ortholog_state$coverage_stats <- NULL
+      shinyjs::hide("ortholog_mapping_results")
+    }
+  })
+  
+  #reusable function to perform ortholog mapping
+  perform_ortholog_mapping <- function(gene_list) {
+    if (is.null(gene_list) || length(gene_list) == 0) {
+      showNotification("No gene list to map", type = "warning", duration = 3)
+      return(FALSE)
+    }
+    
+    waiter_show(html = loading_screen)
+    
+    config <- current_species_config()
+    current_data <- get_all_species_data()
+    
+    tryCatch({
+      gene_mapping <- extract_orthology_for_genes(gene_list, current_data, config)
+      
+      if (is.null(gene_mapping) || length(gene_mapping) == 0) {
+        showNotification("No orthologs found for input genes", type = "warning", duration = 5)
+        ortholog_state$mapped <- FALSE
+        shinyjs::hide("ortholog_mapping_results")
+        waiter_hide()
+        return(FALSE)
+      }
+      
+      coverage_stats <- calculate_ortholog_coverage(gene_mapping, config)
+      
+      ortholog_state$mapped <- TRUE
+      ortholog_state$gene_mapping <- gene_mapping
+      ortholog_state$coverage_stats <- coverage_stats
+      
+      shinyjs::show("ortholog_mapping_results")
+      
+      #update coverage display
+      output$ortholog_coverage_summary <- renderUI({
+        if (is.null(coverage_stats)) return(NULL)
+        
+        div(
+          class = "ortholog-summary-box",
+          h6(icon("chart-bar"), " Ortholog Coverage by Species"),
+          lapply(names(coverage_stats), function(sp_code) {
+            stats <- coverage_stats[[sp_code]]
+            div(
+              style = "margin: 5px 0;",
+              span(
+                class = paste("coverage-badge", stats$coverage_class),
+                paste0(stats$species_name, ": ", stats$genes_found, "/", 
+                       stats$total_genes, " (", stats$coverage_pct, "%)")
+              ),
+              tags$small(
+                style = "margin-left: 8px; color: #666;",
+                paste0(stats$total_orthologs, " total ortholog", 
+                       if(stats$total_orthologs != 1) "s" else "",
+                       if(stats$paralog_count > 0) 
+                         paste0(", ", stats$paralog_count, " paralog", 
+                                if(stats$paralog_count != 1) "s" else "")
+                       else "")
+              )
+            )
+          })
+        )
+      })
+      #generate paralog selection UI
+      output$paralog_selection_ui <- renderUI({
+        if (is.null(gene_mapping)) return(NULL)
+        
+        selection_ui <- tagList()
+        
+        for (gene_map in gene_mapping) {
+          input_gene <- gene_map$original
+          
+          #create section for this input gene
+          gene_ui <- div(
+            class = "mb-3",
+            h6(strong(input_gene), style = "color: var(--bs-primary);"),
+            
+            #create checkboxes for each species
+            lapply(names(config), function(sp_code) {
+              orthologs <- gene_map[[sp_code]]
+              if (is.null(orthologs) || length(orthologs) == 0) return(NULL)
+              
+              sp_name <- config[[sp_code]]$short
+              checkbox_id <- paste0("select_", input_gene, "_", sp_code)
+              
+              #create choices with gene IDs
+              choices <- setNames(orthologs, 
+                                  if(length(orthologs) > 1) {
+                                    sapply(1:length(orthologs), function(i) {
+                                      paste0(orthologs[i], " [", i, "/", length(orthologs), "]")
+                                    })
+                                  } else {
+                                    orthologs
+                                  })
+              
+              div(
+                class = "ms-3 mb-2",
+                strong(sp_name, ":"),
+                checkboxGroupInput(
+                  checkbox_id,
+                  label = NULL,
+                  choices = choices,
+                  selected = orthologs[1],  #default: select first paralog only
+                  inline = FALSE
+                )
+              )
+            })
+          )
+          
+          selection_ui <- tagList(selection_ui, gene_ui)
+        }
+        
+        return(selection_ui)
+      })
+      
+      #initialize selected_orthologs with first paralog from each species
+      ortholog_state$selected_orthologs <- list()
+      for (gene_map in gene_mapping) {
+        input_gene <- gene_map$original
+        for (sp_code in names(config)) {
+          orthologs <- gene_map[[sp_code]]
+          if (!is.null(orthologs) && length(orthologs) > 0) {
+            checkbox_id <- paste0("select_", input_gene, "_", sp_code)
+            ortholog_state$selected_orthologs[[checkbox_id]] <- orthologs[1]
+          }
+        }
+      }
+      showNotification(
+        paste("Mapped", length(gene_mapping), "genes across", 
+              length(config), "species"),
+        type = "message",
+        duration = 3
+      )
+      
+      waiter_hide()
+      return(TRUE)
+      
+    }, error = function(e) {
+      showNotification(paste("Error mapping orthologs:", e$message), 
+                       type = "error", duration = 5)
+      ortholog_state$mapped <- FALSE
+      waiter_hide()
+      return(FALSE)
+    })
+  }
+  #observer for explicit ortholog remapping button
+  observeEvent(input$remap_orthologs, {
+    req(input$enable_ortholog_analysis)
+    
+    #get current gene list
+    gene_list <- if (!is.null(input$gene_list) && nchar(trimws(input$gene_list)) > 0) {
+      genes <- strsplit(trimws(input$gene_list), "[\n\r]+")[[1]]
+      genes[genes != ""]
+    } else {
+      NULL
+    }
+    
+    #perform remapping
+    perform_ortholog_mapping(gene_list)
+  })
+  
+  #observer for "Select All" button
+  observeEvent(input$select_all_paralogs, {
+    req(ortholog_state$gene_mapping)
+    
+    config <- current_species_config()
+    
+    for (gene_map in ortholog_state$gene_mapping) {
+      input_gene <- gene_map$original
+      for (sp_code in names(config)) {
+        orthologs <- gene_map[[sp_code]]
+        if (!is.null(orthologs) && length(orthologs) > 0) {
+          checkbox_id <- paste0("select_", input_gene, "_", sp_code)
+          updateCheckboxGroupInput(session, checkbox_id, selected = orthologs)
+        }
+      }
+    }
+    
+    showNotification("Selected all orthologs", type = "message", duration = 2)
+  })
+  
+  #observer for "Select First Only" button
+  observeEvent(input$select_first_paralogs, {
+    req(ortholog_state$gene_mapping)
+    
+    config <- current_species_config()
+    
+    for (gene_map in ortholog_state$gene_mapping) {
+      input_gene <- gene_map$original
+      for (sp_code in names(config)) {
+        orthologs <- gene_map[[sp_code]]
+        if (!is.null(orthologs) && length(orthologs) > 0) {
+          checkbox_id <- paste0("select_", input_gene, "_", sp_code)
+          updateCheckboxGroupInput(session, checkbox_id, selected = orthologs[1])
+        }
+      }
+    }
+    
+    showNotification("Selected first ortholog from each species", type = "message", duration = 2)
+  })
+  
+  # Observer to show detailed ortholog mapping
+  observeEvent(input$view_ortholog_details, {
+    req(ortholog_state$gene_mapping)
+    
+    config <- current_species_config()
+    mapping_table <- create_ortholog_mapping_table(ortholog_state$gene_mapping, config)
+    
+    showModal(modalDialog(
+      title = div(icon("sitemap"), " Detailed Ortholog Mapping"),
+      size = "xl",
+      DTOutput("ortholog_mapping_modal_table"),
+      footer = tagList(
+        downloadButton("download_ortholog_mapping", "Download CSV", 
+                       class = "btn btn-primary"),
+        modalButton("Close")
+      )
+    ))
+    
+    output$ortholog_mapping_modal_table <- renderDT({
+      datatable(
+        mapping_table,
+        options = list(
+          pageLength = 20,
+          scrollX = TRUE,
+          dom = 'Bfrtip'
+        ),
+        rownames = FALSE
+      )
+    })
+  })
+  
+  # Download handler for ortholog mapping
+  output$download_ortholog_mapping <- downloadHandler(
+    filename = function() {
+      paste0("ortholog_mapping_", format(Sys.Date(), "%Y%m%d"), ".csv")
+    },
+    content = function(file) {
+      req(ortholog_state$gene_mapping)
+      config <- current_species_config()
+      mapping_table <- create_ortholog_mapping_table(ortholog_state$gene_mapping, config)
+      write.csv(mapping_table, file, row.names = FALSE)
+    }
+  )
+  #download handler for coverage statistics
+  output$download_coverage_stats <- downloadHandler(
+    filename = function() {
+      paste0("ortholog_coverage_stats_", format(Sys.Date(), "%Y%m%d"), ".csv")
+    },
+    content = function(file) {
+      req(ortholog_state$coverage_stats)
+      config <- current_species_config()
+      stats_list <- ortholog_state$coverage_stats
+      stats_df <- data.frame(
+        Species = sapply(names(stats_list), function(sp) config[[sp]]$short),
+        Species_Code = names(stats_list),
+        Genes_Found = sapply(stats_list, function(x) x$genes_found),
+        Total_Input_Genes = sapply(stats_list, function(x) x$total_genes),
+        Coverage_Percent = sapply(stats_list, function(x) x$coverage_pct),
+        Total_Orthologs = sapply(stats_list, function(x) x$total_orthologs),
+        Paralog_Count = sapply(stats_list, function(x) x$paralog_count),
+        Coverage_Class = sapply(stats_list, function(x) x$coverage_class),
+        stringsAsFactors = FALSE
+      )
+      write.csv(stats_df, file, row.names = FALSE)
+    }
+  )
+  #parse pathway definitions from text input
+  parse_pathway_definitions <- reactive({
+    if (input$enable_pathway_comparison) {
+      #check for file upload first
+      pathway_text <- if (!is.null(input$pathway_file$datapath)) {
+        readLines(input$pathway_file$datapath, warn = FALSE)
+      } else if (!is.null(input$pathway_definitions) && nchar(trimws(input$pathway_definitions)) > 0) {
+        strsplit(input$pathway_definitions, "[\n\r]+")[[1]]
+      } else {
+        return(NULL)
+      }
+      
+      if (is.null(pathway_text) || length(pathway_text) == 0) {
+        return(NULL)
+      }
+      
+      #parse pathway format
+      pathway_list <- list()
+      current_pathway <- NULL
+      current_genes <- c()
+      
+      for (line in pathway_text) {
+        line <- trimws(line)
+        
+        if (line == "") {
+          #blank line indicates pathway boundary
+          if (!is.null(current_pathway) && length(current_genes) > 0) {
+            pathway_list[[current_pathway]] <- current_genes
+            current_pathway <- NULL
+            current_genes <- c()
+          }
+        } else if (is.null(current_pathway)) {
+          #this is a pathway name
+          current_pathway <- line
+        } else {
+          #this line contains genes
+          genes <- strsplit(line, "[,;\\s]+")[[1]]
+          genes <- genes[genes != ""]
+          current_genes <- c(current_genes, genes)
+        }
+      }
+      
+      #add last pathway if exists
+      if (!is.null(current_pathway) && length(current_genes) > 0) {
+        pathway_list[[current_pathway]] <- current_genes
+      }
+      
+      if (length(pathway_list) == 0) {
+        return(NULL)
+      }
+      
+      return(pathway_list)
+    }
+    return(NULL)
+  })
+  
   observeEvent(input$analyze_gene_groups, {
     req(!is.null(input$gene_list) || !is.null(input$gene_group_file))
     if (is.null(input$gene_list) && is.null(input$gene_group_file)) {
@@ -6545,7 +7810,104 @@ server <- function(input, output, session) {
     waiter_show(html = loading_screen)
     
     tryCatch({
-      # Process input data
+      #check if pathway comparison mode is enabled
+      if (input$enable_pathway_comparison) {
+        #pathway comparison mode
+        pathway_defs <- parse_pathway_definitions()
+        
+        if (is.null(pathway_defs) || length(pathway_defs) == 0) {
+          showNotification("Please define at least one pathway", type = "error")
+          waiter_hide()
+          return()
+        }
+        
+        #ensure ortholog analysis is enabled for pathway comparison
+        if (!input$enable_ortholog_analysis || !ortholog_state$mapped) {
+          showNotification("Pathway comparison requires cross-species ortholog analysis. Enabling now...", 
+                           type = "message", duration = 3)
+          
+          #enable ortholog analysis
+          updateCheckboxInput(session, "enable_ortholog_analysis", value = TRUE)
+          
+          #wait briefly for ortholog mapping
+          Sys.sleep(0.5)
+        }
+        
+        #get configuration and data
+        config <- current_species_config()
+        current_data <- get_all_species_data()
+        
+        #get species data for all species
+        species_data_list <- list()
+        for (sp_code in names(config)) {
+          species_data_list[[sp_code]] <- get_species_data(sp_code)
+        }
+        
+        #process pathways
+        pathway_results <- process_pathway_comparison(
+          pathway_defs,
+          species_data_list,
+          config,
+          current_data
+        )
+        
+        if (is.null(pathway_results) || nrow(pathway_results) == 0) {
+          showNotification("No valid expression data found for pathways", 
+                           type = "error", duration = 5)
+          waiter_hide()
+          return()
+        }
+        
+        #generate pathway heatmap
+        output$gene_group_plot <- renderPlotly({
+          create_pathway_heatmap(
+            pathway_data = pathway_results,
+            value_type = input$pathway_value_type,
+            is_dark_mode = is_dark(),
+            cluster_pathways = input$cluster_pathways
+          )
+        })
+        
+        #generate summary table
+        output$gene_group_table <- renderDT({
+          summary_table <- pathway_results %>%
+            group_by(Pathway, Species) %>%
+            summarise(
+              NGenes = first(NGenes),
+              Mean_Baseline = MeanExpression[Timepoint == "0min"],
+              Mean_Peak = max(MeanExpression, na.rm = TRUE),
+              Mean_Final = MeanExpression[Timepoint == "8h"],
+              .groups = 'drop'
+            )
+          
+          if (input$pathway_value_type == "foldchange") {
+            fc_summary <- calculate_pathway_foldchange(pathway_results) %>%
+              group_by(Pathway, Species) %>%
+              summarise(
+                Max_FoldChange = max(abs(Log2FC), na.rm = TRUE),
+                .groups = 'drop'
+              )
+            summary_table <- left_join(summary_table, fc_summary, by = c("Pathway", "Species"))
+          }
+          
+          datatable(
+            summary_table,
+            options = list(
+              pageLength = 20,
+              scrollX = TRUE,
+              dom = 'tip'
+            ),
+            rownames = FALSE,
+            caption = "Pathway Expression Summary"
+          ) %>%
+            formatRound(columns = which(sapply(summary_table, is.numeric)), digits = 2)
+        })
+        
+        waiter_hide()
+        return()
+      }
+      
+      # Process input data (ORIGINAL SINGLE/MULTI-GENE MODE)
       gene_groups <- if (!is.null(input$gene_group_file$datapath)) {
         read.csv(input$gene_group_file$datapath)
       } else {
@@ -6568,15 +7930,71 @@ server <- function(input, output, session) {
       species_data <- get_species_data(input$group_analysis_species)
       
       #process gene expression data with HOG support; dynamic!
-      config <- current_species_config()  
-      current_data <- get_all_species_data()  # Get the correct data source
-      plot_data <- process_gene_group_data(
-        gene_groups, 
-        species_data, 
-        current_data,  # Use current_data instead of global all_species_data
-        config,  
-        input$group_analysis_species  
-      )
+      if (input$enable_ortholog_analysis && ortholog_state$mapped) {
+        # Multi-species mode using ortholog mapping
+        config <- current_species_config()
+        current_data <- get_all_species_data()
+        
+        # Get species data for all species
+        species_data_list <- list()
+        for (sp_code in names(config)) {
+          species_data_list[[sp_code]] <- get_species_data(sp_code)
+        }
+        
+        #process multi-species data
+        plot_data <- process_multi_species_gene_set(
+          ortholog_state$gene_mapping,
+          species_data_list,
+          config
+        )
+        
+        if (is.null(plot_data) || nrow(plot_data) == 0) {
+          showNotification("No valid expression data found for orthologs", 
+                           type = "error", duration = 5)
+          waiter_hide()
+          return()
+        }
+        
+        #filter plot data based on user selections
+        selected_gene_ids <- c()
+        for (gene_map in ortholog_state$gene_mapping) {
+          input_gene <- gene_map$original
+          for (sp_code in names(config)) {
+            checkbox_id <- paste0("select_", input_gene, "_", sp_code)
+            selected <- input[[checkbox_id]]
+            if (!is.null(selected) && length(selected) > 0) {
+              selected_gene_ids <- c(selected_gene_ids, selected)
+            }
+          }
+        }
+        
+        #filter to only selected orthologs
+        if (length(selected_gene_ids) > 0) {
+          plot_data <- plot_data[plot_data$GeneID %in% selected_gene_ids, ]
+        }
+        
+        if (nrow(plot_data) == 0) {
+          showNotification("No orthologs selected for plotting", 
+                           type = "warning", duration = 5)
+          waiter_hide()
+          return()
+        }
+        
+        #store for later use
+        ortholog_state$multi_species_data <- plot_data
+        
+      } else {
+        # Single species mode (existing behavior)
+        config <- current_species_config()  
+        current_data <- get_all_species_data()
+        plot_data <- process_gene_group_data(
+          gene_groups, 
+          species_data, 
+          current_data,
+          config,  
+          input$group_analysis_species  
+        )
+      }
       
       # check if we got any valid data
       if (is.null(plot_data) || nrow(plot_data) == 0) {
@@ -6613,24 +8031,231 @@ server <- function(input, output, session) {
         })
       })
       
-      # initialize the plot without significance testing
+      #initialize the plot without significance testing
+      # Store flag for multi-species mode
+      is_multi_species <- input$enable_ortholog_analysis && 
+        ortholog_state$mapped && 
+        "Species" %in% colnames(plot_data)
+      
+      #initialize the plot without significance testing
       output$gene_group_plot <- renderPlotly({
-        create_group_visualization(
-          plot_data = plot_data, 
-          viz_type = input$group_viz_type, 
-          is_dark_mode = is_dark(), 
-          distance_method = input$distance_method,
-          data_transform = input$data_transform,
-          show_significance = input$show_significance,
-          alpha = input$significance_threshold,
-          selected_gene = NULL,
-          selected_comparisons = NULL
-        )
+        # Check if we have multi-species data
+        if (is_multi_species) {
+          #check if aggregation to species mean is requested
+          if (!is.null(input$aggregation_level) && input$aggregation_level == "species_mean") {
+            plot_data <- aggregate_to_species_mean(plot_data)
+          }
+          
+          # Use multi-species visualization
+          if (input$group_viz_type == "line") {
+            #create unique identifier for each gene including paralog info
+            plot_data$GeneLabel <- ifelse(
+              duplicated(paste(plot_data$Gene, plot_data$Species)) | 
+                duplicated(paste(plot_data$Gene, plot_data$Species), fromLast = TRUE),
+              paste0(plot_data$Gene, " (", plot_data$GeneID, ")"),
+              plot_data$Gene
+            )
+            
+            #check if aggregation to species mean is requested
+            if (!is.null(input$aggregation_level) && input$aggregation_level == "species_mean") {
+              #calculate mean and SE for error bars
+              plot_summary <- plot_data %>%
+                group_by(Species, Timepoint) %>%
+                summarise(
+                  Mean = mean(Expression, na.rm = TRUE),
+                  SE = sd(Expression, na.rm = TRUE) / sqrt(n()),
+                  .groups = 'drop'
+                )
+              p <- plot_ly(plot_summary, x = ~Timepoint, y = ~Mean, color = ~Species,
+                           type = 'scatter', mode = 'lines+markers',
+                           error_y = list(
+                             type = "data",
+                             array = ~SE,
+                             visible = TRUE
+                           )) %>%
+                layout(
+                  title = "Multi-Species Mean Gene Expression",
+                  xaxis = list(title = "Timepoint"),
+                  yaxis = list(title = "Mean log2 CPM"),
+                  hovermode = "closest"
+                )
+              return(p)
+            }
+            #create multi-species line plot with paralog distinction
+            p <- ggplot(plot_data, 
+                        aes(x = Timepoint, y = Expression,
+                            color = interaction(GeneLabel, Species),
+                            group = interaction(GeneID, Species, Replicate),
+                            text = paste("Gene:", GeneLabel,
+                                         "<br>Gene ID:", GeneID,
+                                         "<br>Species:", Species,
+                                         "<br>Replicate:", Replicate,
+                                         "<br>Time:", Timepoint,
+                                         "<br>Expression:", round(Expression, 2)))) +
+              geom_point(size = 3, alpha = 0.8) +
+              geom_line(linewidth = 1.2, alpha = 0.9) +
+              labs(
+                y = "log2 count per million",
+                title = "Multi-Species Gene Set Expression",
+                subtitle = paste("Comparing", length(unique(plot_data$GeneID)), 
+                                 "total orthologs across", length(unique(plot_data$Species)), "species"),
+                x = "Timepoint",
+                color = "Gene - Species"
+              ) +
+              theme_minimal() +
+              theme(
+                axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+                axis.text.y = element_text(size = 11),
+                plot.title = element_text(size = 16, face = "bold"),
+                plot.subtitle = element_text(size = 12),
+                panel.grid.major = element_line(color = if(is_dark()) "gray30" else "gray90"),
+                panel.grid.minor = element_line(color = if(is_dark()) "gray20" else "gray95"),
+                plot.background = element_rect(fill = if(is_dark()) "#2c3034" else "white", color = NA),
+                panel.background = element_rect(fill = if(is_dark()) "#2c3034" else "white", color = NA),
+                text = element_text(color = if(is_dark()) "white" else "black"),
+                axis.text = element_text(color = if(is_dark()) "white" else "black"),
+                legend.text = element_text(color = if(is_dark()) "white" else "black"),
+                legend.title = element_text(color = if(is_dark()) "white" else "black"),
+                legend.background = element_rect(fill = if(is_dark()) "#2c3034" else "white")
+              )
+            
+            ggplotly(p, tooltip = "text") %>%
+              layout(
+                plot_bgcolor = if(is_dark()) "#2c3034" else "white",
+                paper_bgcolor = if(is_dark()) "#2c3034" else "white",
+                font = list(color = if(is_dark()) "white" else "black")
+              )
+          } else if (input$group_viz_type == "heatmap") {
+            # Create multi-species heatmap
+            # Prepare data: average replicates first
+            heatmap_data <- plot_data %>%
+              group_by(Gene, Species, Timepoint) %>%
+              summarise(AvgExpression = mean(Expression, na.rm = TRUE), .groups = 'drop') %>%
+              mutate(GeneSpecies = paste(Gene, Species, sep = "_"))
+            
+            # Create wide format matrix
+            hm_matrix <- heatmap_data %>%
+              select(GeneSpecies, Timepoint, AvgExpression) %>%
+              pivot_wider(names_from = Timepoint, values_from = AvgExpression) %>%
+              column_to_rownames("GeneSpecies") %>%
+              as.matrix()
+            
+            # Apply transformation
+            if (input$data_transform == "zscore") {
+              hm_matrix <- t(scale(t(hm_matrix)))
+              hm_matrix[!is.finite(hm_matrix)] <- 0
+            } else if (input$data_transform == "centered") {
+              hm_matrix <- t(scale(t(hm_matrix), center = TRUE, scale = FALSE))
+            }
+            
+            plot_ly(
+              z = hm_matrix,
+              x = colnames(hm_matrix),
+              y = rownames(hm_matrix),
+              type = "heatmap",
+              colorscale = "Viridis",
+              hoverinfo = "text",
+              text = matrix(
+                paste(
+                  "Gene-Species:", rep(rownames(hm_matrix), each = ncol(hm_matrix)),
+                  "<br>Time:", rep(colnames(hm_matrix), times = nrow(hm_matrix)),
+                  "<br>Value:", round(as.vector(t(hm_matrix)), 2)
+                ),
+                nrow = nrow(hm_matrix),
+                ncol = ncol(hm_matrix),
+                byrow = TRUE
+              )
+            ) %>%
+              layout(
+                title = "Multi-Species Gene Expression Heatmap",
+                xaxis = list(
+                  title = "Timepoint",
+                  tickangle = -45
+                ),
+                yaxis = list(
+                  title = "Gene - Species",
+                  autorange = "reversed"
+                ),
+                plot_bgcolor = if(is_dark()) "#2c3034" else "white",
+                paper_bgcolor = if(is_dark()) "#2c3034" else "white",
+                font = list(color = if(is_dark()) "white" else "black")
+              )
+          } else {
+            # For bar chart in multi-species mode
+            summary_data <- plot_data %>%
+              group_by(Timepoint, Species, Gene) %>%
+              summarise(Mean = mean(Expression, na.rm = TRUE), .groups = 'drop')
+            
+            p <- ggplot(summary_data, aes(x = Timepoint, y = Mean, fill = interaction(Gene, Species))) +
+              geom_bar(stat = "identity", position = "dodge") +
+              labs(
+                title = "Multi-Species Gene Set Expression",
+                y = "Mean log2 CPM",
+                x = "Timepoint",
+                fill = "Gene - Species"
+              ) +
+              theme_minimal() +
+              theme(
+                axis.text.x = element_text(angle = 45, hjust = 1),
+                plot.background = element_rect(fill = if(is_dark()) "#2c3034" else "white", color = NA),
+                panel.background = element_rect(fill = if(is_dark()) "#2c3034" else "white", color = NA),
+                text = element_text(color = if(is_dark()) "white" else "black"),
+                legend.background = element_rect(fill = if(is_dark()) "#2c3034" else "white")
+              )
+            
+            ggplotly(p) %>%
+              layout(
+                plot_bgcolor = if(is_dark()) "#2c3034" else "white",
+                paper_bgcolor = if(is_dark()) "#2c3034" else "white"
+              )
+          }
+        } else {
+          # Single species mode - use existing visualization
+          create_group_visualization(
+            plot_data = plot_data, 
+            viz_type = input$group_viz_type, 
+            is_dark_mode = is_dark(), 
+            distance_method = input$distance_method,
+            data_transform = input$data_transform,
+            show_significance = input$show_significance,
+            alpha = input$significance_threshold,
+            selected_gene = NULL,
+            selected_comparisons = NULL
+          )
+        }
       })
-      config <- current_species_config()
-      species_name <- config[[input$group_analysis_species]]$name
+      # Generate summary table based on mode
       output$gene_group_table <- renderDT({
-        create_group_summary_table(plot_data, species_name)
+        if (is_multi_species) {
+          # Multi-species summary table
+          summary_data <- plot_data %>%
+            group_by(Gene, Species) %>%
+            summarise(
+              Mean_Expression = mean(Expression, na.rm = TRUE),
+              Max_Expression = max(Expression, na.rm = TRUE),
+              Min_Expression = min(Expression, na.rm = TRUE),
+              SD_Expression = sd(Expression, na.rm = TRUE),
+              .groups = 'drop'
+            )
+          
+          datatable(
+            summary_data,
+            options = list(
+              pageLength = 10,
+              scrollX = TRUE,
+              dom = 'tp'
+            ),
+            rownames = FALSE,
+            caption = "Multi-Species Expression Summary"
+          ) %>%
+            formatRound(columns = c('Mean_Expression', 'Max_Expression', 'Min_Expression', 'SD_Expression'), 
+                        digits = 2)
+        } else {
+          # Single species mode - use existing function
+          config <- current_species_config()
+          species_name <- config[[input$group_analysis_species]]$name
+          create_group_summary_table(plot_data, species_name)
+        }
       })
       
     }, error = function(e) {
@@ -6646,11 +8271,47 @@ server <- function(input, output, session) {
   # Download handler for gene group plot
   output$download_group_plot <- downloadHandler(
     filename = function() {
-      paste("gene_group_", input$group_viz_type, "_", Sys.Date(), ".png", sep = "")
+      if (input$enable_pathway_comparison) {
+        paste("pathway_comparison_", input$pathway_value_type, "_", Sys.Date(), ".png", sep = "")
+      } else {
+        paste("gene_group_", input$group_viz_type, "_", Sys.Date(), ".png", sep = "")
+      }
     },
     content = function(file) {
       p <- plotly::plotly_build(isolate(output$gene_group_plot()))
       plotly::export(p, file = file)
+    }
+  )
+  
+  #download handler for pathway data matrix
+  output$download_pathway_data <- downloadHandler(
+    filename = function() {
+      paste("pathway_data_", format(Sys.Date(), "%Y%m%d"), ".csv", sep = "")
+    },
+    content = function(file) {
+      if (input$enable_pathway_comparison) {
+        pathway_defs <- parse_pathway_definitions()
+        config <- current_species_config()
+        current_data <- get_all_species_data()
+        
+        species_data_list <- list()
+        for (sp_code in names(config)) {
+          species_data_list[[sp_code]] <- get_species_data(sp_code)
+        }
+        
+        pathway_results <- process_pathway_comparison(
+          pathway_defs,
+          species_data_list,
+          config,
+          current_data
+        )
+        
+        if (input$pathway_value_type == "foldchange") {
+          pathway_results <- calculate_pathway_foldchange(pathway_results)
+        }
+        
+        write.csv(pathway_results, file, row.names = FALSE)
+      }
     }
   )
 
