@@ -283,8 +283,7 @@ r <- getOption("repos")
 r["CRAN"] <- "https://cloud.r-project.org"
 options(repos = r)
 
-#============ PERFORMANCE CONFIGURATION ============
-#set to TRUE for debugging - disable in production
+#set to TRUE for debugging
 DEBUG_MODE <- FALSE
 
 #conditional debug print
@@ -300,7 +299,6 @@ debug_cat <- function(...) {
   }
 }
 
-#============ MEMOIZATION CACHE ============
 #cache environment for expensive operations
 .performance_cache <- new.env(hash = TRUE)
 
@@ -6590,9 +6588,7 @@ server <- function(input, output, session) {
     }
   }, striped = TRUE, hover = TRUE, spacing = "xs")
   
-  # ========== DYNAMIC FILE UPLOAD UI GENERATION ==========
-  
-  # Generate expression upload UI based on defined species
+  #expression upload UI based on defined species
   output$expression_upload_ui <- renderUI({
     species <- defined_species()
     
