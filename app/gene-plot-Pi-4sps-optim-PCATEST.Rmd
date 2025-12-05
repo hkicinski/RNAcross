@@ -2123,6 +2123,9 @@ create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
     #determine y-axis label visibility based on grid position
     show_y_labels <- (i - 1) %% grid_layout$ncols == 0
     
+    #convert NA to NaN to prevent plotly nacolor warning
+    heat_matrix[is.na(heat_matrix)] <- NaN
+    
     #create heatmap with shared colorscale
     p <- plot_ly(
       z = heat_matrix,
@@ -2506,7 +2509,23 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
                           )
     )
     
-    # Create heatmap with clustering info in title
+    #create hover text before NaN conversion
+    hm_hover_vals <- ifelse(is.na(transformed_matrix), "No data", round(transformed_matrix, 2))
+    hm_hover_text <- matrix(
+      paste(
+        "Gene:", rep(rownames(transformed_matrix), each = ncol(transformed_matrix)),
+        "<br>Time:", rep(colnames(transformed_matrix), times = nrow(transformed_matrix)),
+        "<br>Value:", as.vector(t(hm_hover_vals))
+      ),
+      nrow = nrow(transformed_matrix),
+      ncol = ncol(transformed_matrix),
+      byrow = TRUE
+    )
+    
+    #convert NA to NaN to prevent plotly nacolor warning
+    transformed_matrix[is.na(transformed_matrix)] <- NaN
+    
+    #create heatmap with clustering info in title
     p <- plot_ly(
       z = transformed_matrix,
       x = colnames(transformed_matrix),
@@ -2521,16 +2540,7 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
       zmin = plot_params$zmin,
       zmax = plot_params$zmax,
       hoverinfo = "text",
-      text = matrix(
-        paste(
-          "Gene:", rep(rownames(transformed_matrix), each = ncol(transformed_matrix)),
-          "<br>Time:", rep(colnames(transformed_matrix), times = nrow(transformed_matrix)),
-          "<br>Value:", round(as.vector(t(transformed_matrix)), 2)
-        ),
-        nrow = nrow(transformed_matrix),
-        ncol = ncol(transformed_matrix),
-        byrow = TRUE
-      )
+      text = hm_hover_text
     ) %>%
       layout(
         title = paste("Gene Expression Heatmap -", plot_params$title, 
@@ -3602,6 +3612,22 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
       paper_bgcolor = plot_bg_color
     )
   
+  #convert NA to NaN to prevent plotly nacolor warning
+  heatmap_matrix[is.na(heatmap_matrix)] <- NaN
+  
+  #create hover text before NaN conversion affects display
+  hover_values <- ifelse(is.nan(heatmap_matrix), "No data", round(heatmap_matrix, 2))
+  hover_text_matrix <- matrix(
+    paste(
+      "Gene:", rep(rownames(heatmap_matrix), each = ncol(heatmap_matrix)),
+      "<br>Species-Timepoint:", rep(column_names, times = nrow(heatmap_matrix)),
+      "<br>Value:", as.vector(t(hover_values))
+    ),
+    nrow = nrow(heatmap_matrix),
+    ncol = ncol(heatmap_matrix),
+    byrow = TRUE
+  )
+  
   p2 <- plot_ly(
     z = heatmap_matrix,
     x = column_names,
@@ -3612,16 +3638,7 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
     zmax = 3,
     zmid = 0,
     hoverinfo = "text",
-    text = matrix(
-      paste(
-        "Gene:", rep(rownames(heatmap_matrix), each = ncol(heatmap_matrix)),
-        "<br>Species-Timepoint:", rep(column_names, times = nrow(heatmap_matrix)),
-        "<br>Value:", round(as.vector(t(heatmap_matrix)), 2)
-      ),
-      nrow = nrow(heatmap_matrix),
-      ncol = ncol(heatmap_matrix),
-      byrow = TRUE
-    ),
+    text = hover_text_matrix,
     showscale = TRUE,  # Explicitly show the colorbar scale
     colorbar = list(
       title = "Z-score",
@@ -9035,13 +9052,29 @@ server <- function(input, output, session) {
               column_to_rownames("GeneSpecies") %>%
               as.matrix()
             
-            # Apply transformation
+            #apply transformation
             if (input$data_transform == "zscore") {
               hm_matrix <- t(scale(t(hm_matrix)))
               hm_matrix[!is.finite(hm_matrix)] <- 0
             } else if (input$data_transform == "centered") {
               hm_matrix <- t(scale(t(hm_matrix), center = TRUE, scale = FALSE))
             }
+            
+            #create hover text before NaN conversion
+            hover_vals <- ifelse(is.na(hm_matrix), "No data", round(hm_matrix, 2))
+            hm_hover <- matrix(
+              paste(
+                "Gene-Species:", rep(rownames(hm_matrix), each = ncol(hm_matrix)),
+                "<br>Time:", rep(colnames(hm_matrix), times = nrow(hm_matrix)),
+                "<br>Value:", as.vector(t(hover_vals))
+              ),
+              nrow = nrow(hm_matrix),
+              ncol = ncol(hm_matrix),
+              byrow = TRUE
+            )
+            
+            #convert NA to NaN to prevent plotly nacolor warning
+            hm_matrix[is.na(hm_matrix)] <- NaN
             
             plot_ly(
               z = hm_matrix,
@@ -9050,16 +9083,7 @@ server <- function(input, output, session) {
               type = "heatmap",
               colorscale = "Viridis",
               hoverinfo = "text",
-              text = matrix(
-                paste(
-                  "Gene-Species:", rep(rownames(hm_matrix), each = ncol(hm_matrix)),
-                  "<br>Time:", rep(colnames(hm_matrix), times = nrow(hm_matrix)),
-                  "<br>Value:", round(as.vector(t(hm_matrix)), 2)
-                ),
-                nrow = nrow(hm_matrix),
-                ncol = ncol(hm_matrix),
-                byrow = TRUE
-              )
+              text = hm_hover
             ) %>%
               layout(
                 title = "Multi-Species Gene Expression Heatmap",
@@ -9325,7 +9349,7 @@ server <- function(input, output, session) {
       
       output$phylo_tree_plot <- renderPlot({
         if (!is.null(tree)) {
-          create_phylo_tree_plot(tree, query_result$genes_by_species, query_result$orthogroup, is_dark(), current_data, species_colors_dynamic(), current_species_config())
+          create_phylo_tree_plot(tree, query_result$genes_by_species, query_result$orthogroup, is_dark(), current_data, species_colors_dynamic(), config)
         } else {
           plot.new()
           text(0.5, 0.5, "Phylogenetic tree not available for this orthogroup", 
@@ -9336,12 +9360,12 @@ server <- function(input, output, session) {
       
       #update orthogroup summary  
       output$orthogroup_summary <- renderUI({
-        create_orthogroup_summary(query_result, current_species_config())
+        create_orthogroup_summary(query_result, config)
       })
       
-      # Update the orthogroup table with enhanced formatting
+      #update orthogroup table with enhanced formatting
       output$explorer_orthogroup_table <- renderDT({
-        create_orthogroup_details_table(query_result, current_species_config())
+        create_orthogroup_details_table(query_result, config)
       })
       
     } else {
