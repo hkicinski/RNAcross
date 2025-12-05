@@ -756,7 +756,7 @@ custom_css <- tags$style(HTML("
     margin-right: 5px;
   }
   
-  /* Fix for Species Analysis dropdown menu */
+  /* Fix for Single Species View dropdown menu */
   .navbar {
     overflow: visible !important;
   }
@@ -1666,7 +1666,7 @@ extract_orthology_for_genes <- function(gene_list, all_species_data = NULL, conf
   for (gene in gene_list) {
     gene_found <- FALSE
     
-    #use existing query_gene_flexible like Combined View does
+    #use existing query_gene_flexible like Comparative View does
     query_result <- NULL
     for (sp_id in names(config)) {
       sp_data <- list(
@@ -5389,13 +5389,13 @@ ui <- page_navbar(
               h5("Quick Actions"),
               actionButton(
                 "explore_species_view",
-                "View in Species Analysis",
+                "View in Single Species View",
                 icon = icon("chart-line"),
                 class = "btn btn-secondary w-100 mb-2"
               ),
               actionButton(
                 "explore_combined_view",
-                "View in Combined Analysis",
+                "View in Comparative Analysis",
                 icon = icon("layer-group"),
                 class = "btn btn-secondary w-100 mb-2"
               ),
@@ -5622,24 +5622,24 @@ ui <- page_navbar(
       )
     )
   ),
-  #dynamic species analysis tabs
+  #single species view tabs
   nav_panel(
-    title = "Species Analysis",
+    title = "Single Species View",
     value = "species_analysis_container",
     uiOutput("dynamic_species_panels")
   ),
   
   
   
-  #combined view tab
+  #comparative view tab
   nav_panel(
-    "Combined View",
+    "Comparative View",
     fluidRow(
       column(
         width = 3,
         div(
           class = "sidebar-panel",
-          h4("Combined Analysis"),
+          h4("Comparative Analysis"),
           textInput(
             "combined_genename",
             "Gene name or ID:",
@@ -5687,6 +5687,25 @@ ui <- page_navbar(
           ),
           
           uiOutput("species_select_ui"),
+          
+          #normalization options
+          div(
+            class = "mt-3 mb-3",
+            checkboxInput(
+              "normalize_to_baseline",
+              "Normalize to baseline (0 min)",
+              value = FALSE
+            ),
+            conditionalPanel(
+              condition = "input.normalize_to_baseline == true",
+              div(
+                class = "small text-muted",
+                icon("info-circle"),
+                " Y-axis will show log2 fold-change relative to 0 min"
+              )
+            )
+          ),
+          
           actionButton(
             "combined_plot_button",
             "Generate Combined Plot",
@@ -6409,8 +6428,8 @@ server <- function(input, output, session) {
       )
     })
     
-    # Return as nav_menu
-    do.call(nav_menu, c(list(title = "Species Analysis"), menu_items))
+    #return as nav_menu
+    do.call(nav_menu, c(list(title = "Single Species View"), menu_items))
   })
   
   # Generate species selection for combined view
@@ -7919,6 +7938,19 @@ server <- function(input, output, session) {
         #cache dark mode state once at render start
         dark_mode <- is_dark()
         
+        #apply baseline normalization if enabled
+        if (isTRUE(input$normalize_to_baseline)) {
+          #calculate baseline (0 min) for each gene-species-replicate
+          plot_data <- plot_data %>%
+            group_by(Gene, Species, Replicate) %>%
+            mutate(
+              Baseline = Expression[Timepoint == "0min"][1],
+              Expression = Expression - Baseline
+            ) %>%
+            ungroup() %>%
+            select(-Baseline)
+        }
+        
         #create a unique identifier for each gene-species combination
         plot_data$GeneSpecies <- paste(plot_data$Gene, "-", plot_data$Species)
         
@@ -7956,7 +7988,10 @@ server <- function(input, output, session) {
         }
         names(color_vector) <- rep_labels
         
-        # Create the plot
+        #set expression label for hover text
+        expr_label <- if (isTRUE(input$normalize_to_baseline)) "log2 FC" else "Expression"
+        
+        #create the plot
         p <- ggplot(plot_data,
                     aes(x = Timepoint, y = Expression,
                         color = GeneSpeciesRep, group = GeneSpeciesRep,
@@ -7964,7 +7999,7 @@ server <- function(input, output, session) {
                                      "<br>Species:", Species,
                                      "<br>Replicate:", Replicate,
                                      "<br>Time:", Timepoint,
-                                     "<br>Expression:", round(Expression, 2)))) +
+                                     paste0("<br>", expr_label, ": "), round(Expression, 2)))) +
           geom_point(size = 3, alpha = 0.8) +
           geom_line(linewidth = 1.2, alpha = 0.9) +
           scale_color_manual(
@@ -7974,7 +8009,11 @@ server <- function(input, output, session) {
             labels = names(color_vector)
           ) +
           labs(
-            y = get_expression_label(input$global_transform),
+            y = if (isTRUE(input$normalize_to_baseline)) {
+              "log2 Fold-Change (vs. 0 min)"
+            } else {
+              get_expression_label(input$global_transform)
+            },
             title = "Cross-species Expression Comparison",
             subtitle = paste("Comparing", length(unique(plot_data$Gene)), "genes across", 
                              length(unique(plot_data$Species)), "species"),
@@ -9389,7 +9428,7 @@ server <- function(input, output, session) {
     waiter_hide()
   })
   
-  #quick action: view in Species Analysis
+  #quick action: view in Single Species View
   observeEvent(input$explore_species_view, {
     req(global_query_state$query_result)
     
@@ -9406,10 +9445,10 @@ server <- function(input, output, session) {
         config <- current_species_config()  # Get current config
         species_name <- config[[first_species]]$name
         
-        # Navigate to Species Analysis and then to the specific species tab
+        #navigate to Single Species View and then to the specific species tab
         updateTabsetPanel(session, "nav", selected = "species_analysis_container")
         
-        # Small delay to ensure the main tab is loaded
+        #small delay to ensure the main tab is loaded
         shinyjs::delay(100, {
           updateTabsetPanel(session, "species_tabs", selected = first_species)
           
@@ -9425,7 +9464,7 @@ server <- function(input, output, session) {
         })
         
         #JavaScript to directly activate the tab panel WITHOUT opening the dropdown
-        #navigate to Species Analysis and then to the specific species tab
+        #navigate to Single Species View and then to the specific species tab
         updateTabsetPanel(session, "nav", selected = "species_analysis_container")
         
         # Small delay to ensure the main tab is loaded
@@ -9493,7 +9532,7 @@ server <- function(input, output, session) {
     # Close the modal
     removeModal()
     
-    # Navigate to Species Analysis and then to the specific species tab
+    #navigate to Single Species View and then to the specific species tab
     updateTabsetPanel(session, "nav", selected = "species_analysis_container")
     
     # Small delay to ensure the main tab is loaded
@@ -9516,12 +9555,12 @@ server <- function(input, output, session) {
     })
   })
   
-  # Quick action: View in Combined Analysis
+  #quick action: view in Comparative Analysis
   observeEvent(input$explore_combined_view, {
     req(global_query_state$query_result)
     
-    # Navigate to combined view
-    updateTabsetPanel(session, "nav", selected = "Combined View")
+    #navigate to comparative view
+    updateTabsetPanel(session, "nav", selected = "Comparative View")
     
     # Pre-fill the search box
     updateTextInput(session, "combined_genename", 
