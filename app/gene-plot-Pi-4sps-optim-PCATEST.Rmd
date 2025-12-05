@@ -2134,7 +2134,6 @@ create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
         list(0.5, "#F7F7F7"),
         list(1, "#B2182B")
       ),
-      nacolor = "#CCCCCC",
       zmid = zmid_val,
       zmin = zmin_val,
       zmax = zmax_val,
@@ -3797,7 +3796,7 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
 # create ortholog mapping table
 create_ortholog_table <- function(gene_mapping, config = NULL) {
   if (is.null(config)) {
-    config <- current_species_config()
+    config <- DEFAULT_SPECIES_CONFIG
   }
   
   # Start with the gene column
@@ -4068,9 +4067,14 @@ generate_cross_species_heatmap <- function(gene_list, species_data_list,
 }
 
 # Helper function to create orthogroup selection UI
-create_orthogroup_selection_ui_enhanced <- function(query_result, prefix) {
+create_orthogroup_selection_ui_enhanced <- function(query_result, prefix, config = NULL) {
   cat("\n=== Creating enhanced orthogroup selection UI ===\n")
   cat("Prefix:", prefix, "\n")
+  
+  #use default config if not provided
+  if (is.null(config)) {
+    config <- DEFAULT_SPECIES_CONFIG
+  }
   
   if (is.null(query_result) || query_result$source == "none") {
     return(NULL)
@@ -4161,7 +4165,6 @@ create_orthogroup_selection_ui_enhanced <- function(query_result, prefix) {
           }
           
         } else {
-          config <- current_species_config()
           species_name <- if(species_code %in% names(config)) {
             config[[species_code]]$short
           } else {
@@ -4236,17 +4239,21 @@ load_gene_tree <- function(og_id, current_data = NULL) {
 }
 
 #create formatted orthogroup table (optimized)
-create_orthogroup_details_table <- function(query_result) {
+create_orthogroup_details_table <- function(query_result, config = NULL) {
   if (is.null(query_result) || is.null(query_result$genes_by_species)) {
     return(NULL)
+  }
+  
+  #use default config if not provided
+  if (is.null(config)) {
+    config <- DEFAULT_SPECIES_CONFIG
   }
   
   #collect gene info using list collection
   gene_list <- lapply(names(query_result$genes_by_species), function(sp) {
     genes_df <- query_result$genes_by_species[[sp]]
     if (nrow(genes_df) > 0) {
-      config <- current_species_config()
-      species_name <- config[[sp]]$name
+      species_name <- if (!is.null(config[[sp]])) config[[sp]]$name else sp
       
       genes_df$Species <- species_name
       genes_df$SpeciesCode <- sp
@@ -4437,10 +4444,8 @@ create_orthogroup_summary <- function(query_result, config = NULL) {
         "Gene distribution:",
         tags$ul(
           lapply(names(gene_counts)[gene_counts > 0], function(sp) {
-            species_name <- config[[sp]]$name
-            count <- gene_counts[sp]
-            config <- if(!is.null(config)) config else current_species_config()
             species_name <- if(sp %in% names(config)) config[[sp]]$name else sp
+            count <- gene_counts[sp]
             tags$li(paste0(species_name, ": ", count, " gene", if(count > 1) "s" else ""))
           })
         )
@@ -7575,7 +7580,7 @@ server <- function(input, output, session) {
           
           # Update the orthogroup selection UI with enhanced version
           output[[paste0(species_id, "_orthogroup_selection")]] <- renderUI({
-            create_orthogroup_selection_ui_enhanced(gene_result, species_id)
+            create_orthogroup_selection_ui_enhanced(gene_result, species_id, current_species_config())
           })
           
           # Get genes for this species
@@ -9336,7 +9341,7 @@ server <- function(input, output, session) {
       
       # Update the orthogroup table with enhanced formatting
       output$explorer_orthogroup_table <- renderDT({
-        create_orthogroup_details_table(query_result)
+        create_orthogroup_details_table(query_result, current_species_config())
       })
       
     } else {
