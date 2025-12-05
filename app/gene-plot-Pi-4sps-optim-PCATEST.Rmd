@@ -7731,7 +7731,15 @@ server <- function(input, output, session) {
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
     plot_settings$species_palette <- input$settings_species_palette
-    plot_settings$species_colors <- derive_species_colors(species_list, input$settings_species_palette, NULL, config)
+    new_colors <- derive_species_colors(species_list, input$settings_species_palette, NULL, config)
+    plot_settings$species_colors <- new_colors
+    #update colourInput UI elements to reflect new palette
+    for (sp in species_list) {
+      input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
+      if (sp %in% names(new_colors)) {
+        colourpicker::updateColourInput(session, input_id, value = new_colors[[sp]])
+      }
+    }
   })
   
   observeEvent(input$settings_multigene_color, {
