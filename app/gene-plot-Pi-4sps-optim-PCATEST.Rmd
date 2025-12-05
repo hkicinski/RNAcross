@@ -2890,11 +2890,7 @@ aggregate_hog_expression <- function(expr_matrix, method = "eigengene") {
 
 
 #single-species PCA plot
-create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE) {
-  debug_print("Starting PCA plot creation")
-  debug_print(paste("Expression matrix dimensions:", nrow(expression_matrix), "x", ncol(expression_matrix)))
-  debug_print(paste("Sample info rows:", nrow(sample_info)))
-  
+create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE, plot_settings = NULL) {
   if (!is.matrix(expression_matrix) && !is.data.frame(expression_matrix)) {
     stop("Expression matrix must be a matrix or data frame")
   }
@@ -2904,53 +2900,38 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
   }
   
   #filter genes with zero variance
-  debug_print("Calculating gene variances")
   var_genes <- apply(expression_matrix, 1, var)
   expression_matrix <- expression_matrix[var_genes > 0, , drop = FALSE]
-  debug_print(paste("Genes after variance filtering:", nrow(expression_matrix)))
   
-  #transpose for PCA (samples as rows)
-  debug_print("Transposing matrix")
   mat <- t(expression_matrix)
-  debug_print(paste("Transposed matrix dimensions:", nrow(mat), "x", ncol(mat)))
-  
-  #run PCA with centering
-  debug_print("Running PCA")
   pca_res <- prcomp(mat, scale. = FALSE, center = TRUE)
-  
-  #calculate variance explained
   var_explained <- (pca_res$sdev^2 / sum(pca_res$sdev^2)) * 100
-  debug_print(paste("Variance explained PC1:", round(var_explained[1], 2), "%"))
-  debug_print(paste("Variance explained PC2:", round(var_explained[2], 2), "%"))
   
-  debug_print("Creating plot data frame")
   pca_data <- data.frame(
     PC1 = pca_res$x[, 1],
     PC2 = pca_res$x[, 2],
     Sample = rownames(pca_res$x)
   )
   
-  debug_print("Merging with sample info")
   pca_data <- merge(pca_data, sample_info, by = "Sample", all.x = TRUE)
-  debug_print(paste("Final data frame rows:", nrow(pca_data)))
-  
   pca_data$Timepoint <- factor(pca_data$Timepoint, levels = TIME_POINTS)
   
-  #precompute plot styling
+  #get settings with defaults
+  point_size <- if (!is.null(plot_settings$pca_point_size)) plot_settings$pca_point_size else 3
+  point_alpha <- if (!is.null(plot_settings$pca_alpha)) plot_settings$pca_alpha else 0.8
+  
   plot_bg_color <- if(is_dark_mode) "#2c3034" else "white"
   text_color <- if(is_dark_mode) "white" else "black"
   grid_color <- if(is_dark_mode) "gray30" else "gray90"
   minor_grid_color <- if(is_dark_mode) "gray20" else "gray95"
   
-  debug_print("Creating ggplot with viridis colors")
   p <- ggplot(pca_data, aes(x = PC1, y = PC2, color = Timepoint, text = Sample)) +
-    geom_point(size = 3) +
-    # this is where viridis is
+    geom_point(size = point_size, alpha = point_alpha) +
     scale_color_viridis(discrete = TRUE, option = "viridis") +
     labs(
       x = sprintf("PC1 (%.1f%%)", var_explained[1]),
       y = sprintf("PC2 (%.1f%%)", var_explained[2]),
-      title = paste("PCA of Gene Expression Data -", ifelse(input$global_transform == "rlog", "rlog", "TMM+log2CPM"))
+      title = "PCA of Gene Expression Data"
     ) +
     theme_minimal() +
     theme(
@@ -2966,9 +2947,7 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
       legend.title = element_text(color = text_color)
     )
   
-  # converts to plotly output
-  debug_print("Converting to plotly")
-  plot <- plotly::ggplotly(p, tooltip = c("Sample", "Timepoint")) %>%
+  plotly::ggplotly(p, tooltip = c("Sample", "Timepoint")) %>%
     layout(
       plot_bgcolor = plot_bg_color,
       paper_bgcolor = plot_bg_color,
@@ -2977,15 +2956,7 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
       legend = list(bgcolor = plot_bg_color),
       margin = list(t = 50, r = 20, b = 50, l = 50)
     ) %>%
-    config(
-      displayModeBar = TRUE,
-      modeBarButtons = list(
-        list("zoom2d", "pan2d", "resetScale2d", "toImage")
-      )
-    )
-  
-  debug_print("PCA plot creation completed")
-  return(plot)
+    config(displayModeBar = TRUE, modeBarButtons = list(list("zoom2d", "pan2d", "resetScale2d", "toImage")))
 }
 
 #pre-aggregate HOG expression for a single species across all samples
@@ -6833,6 +6804,22 @@ server <- function(input, output, session) {
     initialized = FALSE
   )
   
+  #plot state tracking for reactive re-rendering on settings changes
+  plot_state <- reactiveValues(
+    combined_ready = FALSE,
+    combined_data = NULL,
+    pca_ready = FALSE,
+    pca_data = NULL,
+    ridgeline_ready = FALSE,
+    ridgeline_data = NULL,
+    heatmap_ready = FALSE,
+    heatmap_data = NULL,
+    species_plots = list(),
+    gene_group_ready = FALSE,
+    gene_group_data = NULL,
+    gene_group_mode = NULL
+  )
+  
   #initialize settings from species config
   observe({
     req(!plot_settings$initialized)
@@ -7342,57 +7329,32 @@ server <- function(input, output, session) {
     ))
   }
   
-  # PCA observer - with aggregation method support
+  #pca observer - stores data for reactive rendering
   observeEvent(input$run_pca, {
     waiter_show(html = loading_screen)
     
-    debug_cat("PCA type:", input$pca_type, "\n")
-    if (input$pca_type == "multi") {
-      debug_cat("Aggregation method:", input$hog_aggregation_method, "\n")
-    }
-    
     tryCatch({
       if (input$pca_type == "single") {
-        debug_cat("Single-species PCA\n")
         species_data <- get_species_data(input$pca_species)
-        
-        #get expression matrix based on transformation
         lcpm_data <- get_expression_matrix(input$pca_species, input$global_transform, species_data)
-        
-        sample_info <- if(input$pca_species == "cg") {
-          species_data$sample_info
-        } else {
-          species_data[[paste0(input$pca_species, "_sample_info")]]
-        }
+        sample_info <- if(input$pca_species == "cg") species_data$sample_info else species_data[[paste0(input$pca_species, "_sample_info")]]
         
         if (is.null(lcpm_data) || is.null(sample_info)) {
           stop("Required data not found for selected species")
         }
         
-        output$pca_plot <- renderPlotly({
-          create_pca_plot(
-            expression_matrix = lcpm_data,
-            sample_info = sample_info,
-            is_dark_mode = is_dark()
-          )
-        })
-        
-        # Add debugging output
-        output$pca_debug_output <- renderPrint({
-          cat("Single species PCA completed for:", input$pca_species, "\n")
-          cat("Number of genes analyzed:", nrow(lcpm_data), "\n")
-          cat("Number of samples:", ncol(lcpm_data), "\n")
-          cat("Data transformation: centered-scaled\n")  
-        })
+        plot_state$pca_data <- list(
+          type = "single",
+          expression_matrix = lcpm_data,
+          sample_info = sample_info,
+          species = input$pca_species,
+          n_genes = nrow(lcpm_data),
+          n_samples = ncol(lcpm_data)
+        )
+        plot_state$pca_ready <- TRUE
         
       } else {
-        debug_cat("Multi-species PCA\n")
-        #multi-species PCA with selected aggregation method
-        aggregation_method <- if (!is.null(input$hog_aggregation_method)) {
-          input$hog_aggregation_method
-        } else {
-          "eigengene"  #default
-        }
+        aggregation_method <- if (!is.null(input$hog_aggregation_method)) input$hog_aggregation_method else "eigengene"
         
         plot_result <- create_multi_species_pca(
           get_species_data = get_species_data,
@@ -7404,72 +7366,100 @@ server <- function(input, output, session) {
           plot_settings = reactiveValuesToList(plot_settings)
         )
         
-        # Check if plot was created successfully
         if (!is.null(plot_result)) {
-          output$pca_plot <- renderPlotly({
-            plot_result
-          })
-          
-          # Store matrices data for download
           pca_matrices_data <- attr(plot_result, "matrices_data")
           if (!is.null(pca_matrices_data)) {
             session$userData$pca_matrices <- pca_matrices_data
           }
-        }
-        
-        # Add debugging output
-        output$pca_debug_output <- renderPrint({
-          cat("Multi-species PCA completed\n")
-          cat("Aggregation method:", aggregation_method, "\n")
           
-          method_desc <- switch(aggregation_method,
-                                "single_only" = "Using SINGLE-COPY GENES ONLY",
-                                "mean" = "Averaging expression across paralogs",
-                                "median" = "Using median expression (robust to outliers)",
-                                "eigengene" = "Computing eigengene (first PC) for each HOG",
-                                "max_expr" = "Selecting highest expressed paralog per HOG",
-                                "max_var" = "Selecting most variable paralog per HOG",
-                                "var_weighted" = "Variance-weighted mean across paralogs",
-                                "Unknown method"
+          plot_state$pca_data <- list(
+            type = "multi",
+            plot_result = plot_result,
+            aggregation_method = aggregation_method,
+            matrices_data = pca_matrices_data
           )
-          cat(method_desc, "\n\n")
-          
-          if (!is.null(session$userData$pca_matrices)) {
-            cat("Matrix dimensions:", 
-                nrow(session$userData$pca_matrices$sample_matrix), "x",
-                ncol(session$userData$pca_matrices$sample_matrix), "\n")
-            cat("Total HOGs used:", ncol(session$userData$pca_matrices$sample_matrix), "\n")
-            
-            #show aggregation stats if available
-            if (aggregation_method != "single_only" && 
-                !is.null(session$userData$pca_matrices$aggregation_stats)) {
-              cat("\nHOG composition:\n")
-              for (sp in names(session$userData$pca_matrices$aggregation_stats)) {
-                stats <- session$userData$pca_matrices$aggregation_stats[[sp]]
-                cat("  ", sp, ": ", stats$single_copy, " single-copy, ", 
-                    stats$multi_copy, " multi-copy\n", sep = "")
-              }
-            }
-          }
-        })
+          plot_state$pca_ready <- TRUE
+        } else {
+          plot_state$pca_ready <- FALSE
+        }
       }
       
     }, error = function(e) {
-      debug_cat("PCA error:", e$message, "\n")
-      showNotification(
-        paste("Error in PCA analysis:", e$message),
-        type = "error",
-        duration = NULL
-      )
-      
-      # Show error in the debug output
-      output$pca_debug_output <- renderPrint({
-        cat("ERROR in PCA analysis:\n")
-        cat(e$message, "\n")
-      })
+      showNotification(paste("Error in PCA analysis:", e$message), type = "error", duration = NULL)
+      plot_state$pca_ready <- FALSE
+      plot_state$pca_data <- list(error = e$message)
     })
     
     waiter_hide()
+  })
+  
+  #pca plot render - reactive to plot_state and plot_settings
+  output$pca_plot <- renderPlotly({
+    if (!isTRUE(plot_state$pca_ready) || is.null(plot_state$pca_data)) {
+      return(plotly_empty() %>% add_annotations(text = "Click Run PCA to generate plot", showarrow = FALSE))
+    }
+    
+    pca_data <- plot_state$pca_data
+    dark_mode <- is_dark()
+    current_settings <- reactiveValuesToList(plot_settings)
+    
+    if (!is.null(pca_data$error)) {
+      return(plotly_empty() %>% add_annotations(text = paste("Error:", pca_data$error), showarrow = FALSE))
+    }
+    
+    if (pca_data$type == "single") {
+      create_pca_plot(
+        expression_matrix = pca_data$expression_matrix,
+        sample_info = pca_data$sample_info,
+        is_dark_mode = dark_mode,
+        plot_settings = current_settings
+      )
+    } else {
+      create_multi_species_pca(
+        get_species_data = get_species_data,
+        is_dark_mode = dark_mode,
+        aggregation_method = pca_data$aggregation_method,
+        species_config = current_species_config(),
+        all_species_data_obj = get_all_species_data(),
+        transform_type = input$global_transform,
+        plot_settings = current_settings
+      )
+    }
+  })
+  
+  #pca debug output
+  output$pca_debug_output <- renderPrint({
+    if (!isTRUE(plot_state$pca_ready) || is.null(plot_state$pca_data)) return(invisible())
+    
+    pca_data <- plot_state$pca_data
+    if (!is.null(pca_data$error)) {
+      cat("ERROR:", pca_data$error, "\n")
+      return()
+    }
+    
+    if (pca_data$type == "single") {
+      cat("Single species PCA completed for:", pca_data$species, "\n")
+      cat("Number of genes analyzed:", pca_data$n_genes, "\n")
+      cat("Number of samples:", pca_data$n_samples, "\n")
+    } else {
+      cat("Multi-species PCA completed\n")
+      cat("Aggregation method:", pca_data$aggregation_method, "\n")
+      
+      method_desc <- switch(pca_data$aggregation_method,
+                            "single_only" = "Using SINGLE-COPY GENES ONLY",
+                            "mean" = "Averaging expression across paralogs",
+                            "median" = "Using median expression",
+                            "eigengene" = "Computing eigengene for each HOG",
+                            "max_expr" = "Selecting highest expressed paralog",
+                            "max_var" = "Selecting most variable paralog",
+                            "var_weighted" = "Variance-weighted mean",
+                            "Unknown method")
+      cat(method_desc, "\n")
+      
+      if (!is.null(pca_data$matrices_data)) {
+        cat("\nMatrix:", nrow(pca_data$matrices_data$sample_matrix), "x", ncol(pca_data$matrices_data$sample_matrix), "\n")
+      }
+    }
   })
 
   
@@ -8390,7 +8380,7 @@ server <- function(input, output, session) {
         })
       }
       
-      # Plot button handler - SIMPLIFIED
+      #plot button handler - stores state for reactive rendering
       if (!exists(obs_plot_id, envir = session$userData)) {
         session$userData[[obs_plot_id]] <- observeEvent(input[[paste0(species_id, "_plot_button")]], {
           waiter_show(html = loading_screen)
@@ -8403,34 +8393,51 @@ server <- function(input, output, session) {
             return()
           }
           
-          species_data <- get_species_data(species_id)
+          plot_state$species_plots[[species_id]] <- list(
+            gene = selected_gene,
+            ready = TRUE
+          )
           
-          output[[paste0(species_id, "_gene_plot")]] <- renderPlotly({
+          waiter_hide()
+        })
+        
+        #species gene plot render - reactive to plot_state and plot_settings
+        local({
+          sp_id <- species_id
+          output[[paste0(sp_id, "_gene_plot")]] <- renderPlotly({
+            sp_state <- plot_state$species_plots[[sp_id]]
+            if (is.null(sp_state) || !isTRUE(sp_state$ready)) {
+              return(plotly_empty() %>% add_annotations(text = "Search for a gene and click Generate Plot", showarrow = FALSE))
+            }
+            
+            species_data <- get_species_data(sp_id)
             config <- current_species_config()
+            current_settings <- reactiveValuesToList(plot_settings)
+            
             create_gene_plot(
-              lc = get_expression_matrix(species_id, input$global_transform, species_data),
-              gene = selected_gene,
+              lc = get_expression_matrix(sp_id, input$global_transform, species_data),
+              gene = sp_state$gene,
               sample_info = species_data$sample_info,
-              species_name = config[[species_id]]$short,
+              species_name = config[[sp_id]]$short,
               is_dark_mode = is_dark(),
               species_colors = species_colors_dynamic(),
               transform_type = input$global_transform,
-              plot_settings = reactiveValuesToList(plot_settings)
+              plot_settings = current_settings
             )
           })
           
-          output[[paste0(species_id, "_gene_info")]] <- renderText({
-            gene_info <- species_data$anno[species_data$anno$GeneID == selected_gene, ]
+          output[[paste0(sp_id, "_gene_info")]] <- renderText({
+            sp_state <- plot_state$species_plots[[sp_id]]
+            if (is.null(sp_state) || !isTRUE(sp_state$ready)) return("")
+            
+            species_data <- get_species_data(sp_id)
+            gene_info <- species_data$anno[species_data$anno$GeneID == sp_state$gene, ]
             if (nrow(gene_info) > 0) {
-              paste("Gene ID:", selected_gene,
-                    "\nGene Name:", gene_info$GeneName[1],
-                    "\nChromosome:", gene_info$Chr[1])
+              paste("Gene ID:", sp_state$gene, "\nGene Name:", gene_info$GeneName[1], "\nChromosome:", gene_info$Chr[1])
             } else {
-              paste("Gene ID:", selected_gene)
+              paste("Gene ID:", sp_state$gene)
             }
           })
-          
-          waiter_hide()
         })
       }
       
@@ -8510,45 +8517,35 @@ server <- function(input, output, session) {
     }
   )
   
-  # Combined plot button observer
+  #combined plot button observer - stores data for reactive rendering
   observeEvent(input$combined_plot_button, {
     req(input$species_select)
     waiter_show(html = loading_screen)
     
-    # Collect all selected genes
     selected_genes_list <- list()
-    
     for (species_code in input$species_select) {
-      # Get selections from combined_selections reactive values
       gene_ids <- combined_selections[[species_code]]
-      
       if (!is.null(gene_ids) && length(gene_ids) > 0) {
         selected_genes_list[[species_code]] <- gene_ids
       }
     }
     
-    # Check if we have any genes selected
     if (length(selected_genes_list) == 0) {
       showNotification("No genes selected for plotting. Please search for a gene first.", type = "warning")
+      plot_state$combined_ready <- FALSE
       waiter_hide()
       return()
     }
     
-    #create combined plot data with support for multiple genes per species
     config <- current_species_config()
-    
-    #collect all expression data in list first
     plot_data_list <- list()
     
     for (species_code in names(selected_genes_list)) {
       species_data <- get_species_data(species_code)
       gene_ids <- selected_genes_list[[species_code]]
-      
-      #get expression matrix based on transformation
       expr_matrix <- get_expression_matrix(species_code, input$global_transform, species_data)
       
       for (gene_id in gene_ids) {
-        #handle K. lactis underscore issue (only for original data)
         gene_id_to_use <- gene_id
         if (data_source() == "default" && species_code == "kl" && !gene_id %in% rownames(expr_matrix)) {
           gene_id_alt <- gsub("^(KLLA0)(.*)", "\\1_\\2", gene_id)
@@ -8559,8 +8556,6 @@ server <- function(input, output, session) {
         
         if (gene_id_to_use %in% rownames(expr_matrix)) {
           species_name <- config[[species_code]]$name
-          
-          #get gene name for display
           gene_name <- ""
           anno_idx <- which(species_data$anno$GeneID == gene_id)
           if (length(anno_idx) > 0) {
@@ -8568,11 +8563,7 @@ server <- function(input, output, session) {
             if (is.na(gene_name)) gene_name <- ""
           }
           
-          gene_display <- if (gene_name != "") {
-            paste0(gene_name, " (", gene_id, ")")
-          } else {
-            gene_id
-          }
+          gene_display <- if (gene_name != "") paste0(gene_name, " (", gene_id, ")") else gene_id
           
           expr_data <- data.frame(
             Gene = gene_display,
@@ -8583,13 +8574,11 @@ server <- function(input, output, session) {
             Replicate = species_data$sample_info$Replicate,
             Expression = as.numeric(expr_matrix[gene_id_to_use, ])
           )
-          
           plot_data_list[[length(plot_data_list) + 1]] <- expr_data
         }
       }
     }
     
-    #combine all at once
     plot_data <- if (length(plot_data_list) > 0) {
       as.data.frame(rbindlist(plot_data_list, fill = TRUE))
     } else {
@@ -8597,162 +8586,106 @@ server <- function(input, output, session) {
     }
     
     if (nrow(plot_data) > 0) {
-      output$combined_gene_plot <- renderPlotly({
-        #cache dark mode state once at render start
-        dark_mode <- is_dark()
-        
-        #apply baseline normalization if enabled
-        if (isTRUE(input$normalize_to_baseline)) {
-          #calculate baseline (0 min) for each gene-species-replicate
-          plot_data <- plot_data %>%
-            group_by(Gene, Species, Replicate) %>%
-            mutate(
-              Baseline = Expression[Timepoint == "0min"][1],
-              Expression = Expression - Baseline
-            ) %>%
-            ungroup() %>%
-            select(-Baseline)
-        }
-        
-        #create a unique identifier for each gene-species combination
-        plot_data$GeneSpecies <- paste(plot_data$Gene, "-", plot_data$Species)
-        
-        #get species colors from plot_settings
-        settings_colors <- plot_settings$species_colors
-        unique_species <- unique(plot_data$Species)
-        unique_combinations <- unique(plot_data$GeneSpecies)
-        n_combinations <- length(unique_combinations)
-        
-        #build color map using species colors from settings
-        color_map <- list()
-        for (combo in unique_combinations) {
-          #extract species from combo (format: "Gene - Species")
-          sp <- sub("^.* - ", "", combo)
-          if (sp %in% names(settings_colors)) {
-            color_map[[combo]] <- settings_colors[[sp]]
-          } else {
-            #fallback color
-            color_map[[combo]] <- "#808080"
-          }
-        }
-        
-        #add replicate information
-        plot_data$GeneSpeciesRep <- paste(plot_data$GeneSpecies, "Rep", plot_data$Replicate)
-        
-        #create color vector with alpha for replicates
-        color_vector <- c()
-        for (combo in unique_combinations) {
-          base_color <- color_map[[combo]]
-          color_vector <- c(color_vector, 
-                            base_color,
-                            adjustcolor(base_color, alpha.f = 0.6))
-        }
-        
-        #create proper labels for the color vector
-        rep_labels <- c()
-        for (combo in unique_combinations) {
-          rep_labels <- c(rep_labels,
-                          paste(combo, "Rep 1"),
-                          paste(combo, "Rep 2"))
-        }
-        names(color_vector) <- rep_labels
-        
-        #set expression label for hover text
-        expr_label <- if (isTRUE(input$normalize_to_baseline)) "log2 FC" else "Expression"
-        
-        #create the plot
-        p <- ggplot(plot_data,
-                    aes(x = Timepoint, y = Expression,
-                        color = GeneSpeciesRep, group = GeneSpeciesRep,
-                        text = paste("Gene:", Gene,
-                                     "<br>Species:", Species,
-                                     "<br>Replicate:", Replicate,
-                                     "<br>Time:", Timepoint,
-                                     paste0("<br>", expr_label, ": "), round(Expression, 2)))) +
-          geom_point(size = 3, alpha = 0.8) +
-          geom_line(linewidth = 1.2, alpha = 0.9) +
-          scale_color_manual(
-            values = color_vector,
-            name = "Gene - Species",
-            breaks = names(color_vector),
-            labels = names(color_vector)
-          ) +
-          labs(
-            y = if (isTRUE(input$normalize_to_baseline)) {
-              "log2 Fold-Change (vs. 0 min)"
-            } else {
-              get_expression_label(input$global_transform)
-            },
-            title = "Cross-species Expression Comparison",
-            subtitle = paste("Comparing", length(unique(plot_data$Gene)), "genes across", 
-                             length(unique(plot_data$Species)), "species"),
-            x = "Timepoint"
-          ) +
-          theme_minimal() +
-          theme(
-            axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
-            axis.text.y = element_text(size = 11),
-            plot.title = element_text(size = 16, face = "bold"),
-            plot.subtitle = element_text(size = 12),
-            panel.grid.major = element_line(color = if(dark_mode) "gray30" else "gray90"),
-            panel.grid.minor = element_line(color = if(dark_mode) "gray20" else "gray95"),
-            plot.background = element_rect(fill = if(dark_mode) "#2c3034" else "white", color = NA),
-            panel.background = element_rect(fill = if(dark_mode) "#2c3034" else "white", color = NA),
-            text = element_text(color = if(dark_mode) "white" else "black"),
-            axis.text = element_text(color = if(dark_mode) "white" else "black"),
-            legend.text = element_text(color = if(dark_mode) "white" else "black", size = 9),
-            legend.title = element_text(color = if(dark_mode) "white" else "black", size = 11),
-            legend.background = element_rect(fill = if(dark_mode) "#2c3034" else "white"),
-            legend.key = element_rect(fill = if(dark_mode) "#2c3034" else "white")
-          )
-        
-        #convert to plotly with custom hover text
-        ggplotly(p, tooltip = "text") %>%
-          layout(
-            plot_bgcolor = if(dark_mode) "#2c3034" else "white",
-            paper_bgcolor = if(dark_mode) "#2c3034" else "white",
-            font = list(color = if(dark_mode) "white" else "black"),
-            hoverlabel = list(
-              bgcolor = if(dark_mode) "#444" else "white",
-              font = list(size = 12)
-            ),
-            showlegend = TRUE,
-            legend = list(
-              x = 1.02,
-              y = 0.5,
-              bgcolor = if(dark_mode) "#2c3034" else "white",
-              bordercolor = if(dark_mode) "#444" else "#ddd",
-              borderwidth = 1,
-              font = list(size = 10),
-              tracegroupgap = 5
-            ),
-            margin = list(b = 100, r = 250, t = 80, l = 60),
-            xaxis = list(
-              tickfont = list(size = 11)
-            ),
-            yaxis = list(
-              tickfont = list(size = 11)
-            )
-          ) %>%
-          config(
-            displayModeBar = TRUE,
-            modeBarButtons = list(
-              list("zoom2d", "pan2d", "resetScale2d", "toImage")
-            )
-          )
-      })
+      plot_state$combined_data <- plot_data
+      plot_state$combined_ready <- TRUE
     } else {
-      output$combined_gene_plot <- renderPlotly({
-        plotly_empty() %>%
-          add_annotations(
-            text = "No valid expression data found for selected genes",
-            showarrow = FALSE
-          )
-      })
+      plot_state$combined_ready <- FALSE
       showNotification("No valid expression data found for selected genes", type = "error")
     }
     
     waiter_hide()
+  })
+  
+  #combined gene plot render - reactive to plot_state and plot_settings
+  output$combined_gene_plot <- renderPlotly({
+    if (!isTRUE(plot_state$combined_ready) || is.null(plot_state$combined_data)) {
+      return(plotly_empty() %>% add_annotations(text = "Search for a gene and click Generate Plot", showarrow = FALSE))
+    }
+    
+    plot_data <- plot_state$combined_data
+    dark_mode <- is_dark()
+    settings_colors <- plot_settings$species_colors
+    normalize_baseline <- isTRUE(input$normalize_to_baseline)
+    transform_type <- input$global_transform
+    
+    if (normalize_baseline) {
+      plot_data <- plot_data %>%
+        group_by(Gene, Species, Replicate) %>%
+        mutate(
+          Baseline = Expression[Timepoint == "0min"][1],
+          Expression = Expression - Baseline
+        ) %>%
+        ungroup() %>%
+        select(-Baseline)
+    }
+    
+    plot_data$GeneSpecies <- paste(plot_data$Gene, "-", plot_data$Species)
+    unique_combinations <- unique(plot_data$GeneSpecies)
+    
+    color_map <- list()
+    for (combo in unique_combinations) {
+      sp <- sub("^.* - ", "", combo)
+      color_map[[combo]] <- if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
+    }
+    
+    plot_data$GeneSpeciesRep <- paste(plot_data$GeneSpecies, "Rep", plot_data$Replicate)
+    
+    color_vector <- c()
+    rep_labels <- c()
+    for (combo in unique_combinations) {
+      base_color <- color_map[[combo]]
+      color_vector <- c(color_vector, base_color, adjustcolor(base_color, alpha.f = 0.6))
+      rep_labels <- c(rep_labels, paste(combo, "Rep 1"), paste(combo, "Rep 2"))
+    }
+    names(color_vector) <- rep_labels
+    
+    expr_label <- if (normalize_baseline) "log2 FC" else "Expression"
+    
+    p <- ggplot(plot_data,
+                aes(x = Timepoint, y = Expression, color = GeneSpeciesRep, group = GeneSpeciesRep,
+                    text = paste("Gene:", Gene, "<br>Species:", Species, "<br>Replicate:", Replicate,
+                                 "<br>Time:", Timepoint, paste0("<br>", expr_label, ": "), round(Expression, 2)))) +
+      geom_point(size = 3, alpha = 0.8) +
+      geom_line(linewidth = 1.2, alpha = 0.9) +
+      scale_color_manual(values = color_vector, name = "Gene - Species", breaks = names(color_vector), labels = names(color_vector)) +
+      labs(
+        y = if (normalize_baseline) "log2 Fold-Change (vs. 0 min)" else get_expression_label(transform_type),
+        title = "Cross-species Expression Comparison",
+        subtitle = paste("Comparing", length(unique(plot_data$Gene)), "genes across", length(unique(plot_data$Species)), "species"),
+        x = "Timepoint"
+      ) +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 11),
+        axis.text.y = element_text(size = 11),
+        plot.title = element_text(size = 16, face = "bold"),
+        plot.subtitle = element_text(size = 12),
+        panel.grid.major = element_line(color = if(dark_mode) "gray30" else "gray90"),
+        panel.grid.minor = element_line(color = if(dark_mode) "gray20" else "gray95"),
+        plot.background = element_rect(fill = if(dark_mode) "#2c3034" else "white", color = NA),
+        panel.background = element_rect(fill = if(dark_mode) "#2c3034" else "white", color = NA),
+        text = element_text(color = if(dark_mode) "white" else "black"),
+        axis.text = element_text(color = if(dark_mode) "white" else "black"),
+        legend.text = element_text(color = if(dark_mode) "white" else "black", size = 9),
+        legend.title = element_text(color = if(dark_mode) "white" else "black", size = 11),
+        legend.background = element_rect(fill = if(dark_mode) "#2c3034" else "white"),
+        legend.key = element_rect(fill = if(dark_mode) "#2c3034" else "white")
+      )
+    
+    ggplotly(p, tooltip = "text") %>%
+      layout(
+        plot_bgcolor = if(dark_mode) "#2c3034" else "white",
+        paper_bgcolor = if(dark_mode) "#2c3034" else "white",
+        font = list(color = if(dark_mode) "white" else "black"),
+        hoverlabel = list(bgcolor = if(dark_mode) "#444" else "white", font = list(size = 12)),
+        showlegend = TRUE,
+        legend = list(x = 1.02, y = 0.5, bgcolor = if(dark_mode) "#2c3034" else "white",
+                      bordercolor = if(dark_mode) "#444" else "#ddd", borderwidth = 1, font = list(size = 10), tracegroupgap = 5),
+        margin = list(b = 100, r = 250, t = 80, l = 60),
+        xaxis = list(tickfont = list(size = 11)),
+        yaxis = list(tickfont = list(size = 11))
+      ) %>%
+      config(displayModeBar = TRUE, modeBarButtons = list(list("zoom2d", "pan2d", "resetScale2d", "toImage")))
   })
   
   # Download handler for combined plot
@@ -8793,71 +8726,81 @@ server <- function(input, output, session) {
   })
 
   # Generate heatmap when button is clicked
+  #heatmap observer - stores data for reactive rendering
   observeEvent(input$generate_ortholog_heatmap, {
     req(input$ortholog_gene_list)
     waiter_show(html = loading_screen)
     
-    # split gene list by newlines, commas, or semicolons
     gene_list <- unlist(strsplit(input$ortholog_gene_list, "[\n\r,;]+"))
     gene_list <- trimws(gene_list)
     gene_list <- gene_list[gene_list != ""]
     
-    # only proceed if we have genes
     if (length(gene_list) == 0) {
       showNotification("Please enter at least one gene", type = "error")
+      plot_state$heatmap_ready <- FALSE
       waiter_hide()
       return()
     }
     
     config <- current_species_config()
-    current_data <- get_all_species_data()
     species_data_list <- list()
     for (species_id in names(config)) {
       species_data_list[[species_id]] <- get_species_data(species_id)
     }
     
-    #generate the cross-species heatmap
-    result <- tryCatch({
-      generate_cross_species_heatmap(
-        gene_list = gene_list,
-        species_data_list = species_data_list,
-        normalization = input$heatmap_normalization,
-        is_dark_mode = is_dark(),
-        cluster_rows = input$cluster_rows,
-        cluster_cols = input$cluster_cols,
-        config = config,
-        all_species_data = get_all_species_data(),
-        transform_type = input$global_transform,
-        plot_settings = reactiveValuesToList(plot_settings)
-      )
-    }, error = function(e) {
-      list(
-        plot = NULL,
-        table = NULL,
-        error = paste("Error generating heatmap:", e$message)
-      )
-    })
-    
-    # check for errors
-    if (!is.null(result$error)) {
-      showNotification(result$error, type = "error", duration = NULL)
-      waiter_hide()
-      return()
-    }
-    
-    # store results for download
-    ortholog_result(result)
-    
-    # update UI with results
-    output$ortholog_heatmap_plot <- renderPlotly({
-      result$plot
-    })
-    
-    output$ortholog_mapping_table <- renderDT({
-      result$table
-    })
+    plot_state$heatmap_data <- list(
+      gene_list = gene_list,
+      species_data_list = species_data_list,
+      normalization = input$heatmap_normalization,
+      cluster_rows = input$cluster_rows,
+      cluster_cols = input$cluster_cols,
+      config = config,
+      transform_type = input$global_transform
+    )
+    plot_state$heatmap_ready <- TRUE
     
     waiter_hide()
+  })
+  
+  #heatmap plot render - reactive to plot_state and plot_settings
+  output$ortholog_heatmap_plot <- renderPlotly({
+    if (!isTRUE(plot_state$heatmap_ready) || is.null(plot_state$heatmap_data)) {
+      return(plotly_empty() %>% add_annotations(text = "Enter genes and click Generate Heatmap", showarrow = FALSE))
+    }
+    
+    hd <- plot_state$heatmap_data
+    dark_mode <- is_dark()
+    current_settings <- reactiveValuesToList(plot_settings)
+    
+    result <- tryCatch({
+      generate_cross_species_heatmap(
+        gene_list = hd$gene_list,
+        species_data_list = hd$species_data_list,
+        normalization = hd$normalization,
+        is_dark_mode = dark_mode,
+        cluster_rows = hd$cluster_rows,
+        cluster_cols = hd$cluster_cols,
+        config = hd$config,
+        all_species_data = get_all_species_data(),
+        transform_type = hd$transform_type,
+        plot_settings = current_settings
+      )
+    }, error = function(e) {
+      list(plot = NULL, error = e$message)
+    })
+    
+    if (!is.null(result$error)) {
+      return(plotly_empty() %>% add_annotations(text = paste("Error:", result$error), showarrow = FALSE))
+    }
+    
+    ortholog_result(result)
+    result$plot
+  })
+  
+  #heatmap table render
+  output$ortholog_mapping_table <- renderDT({
+    req(ortholog_result())
+    ortholog_result()$table
   })
 
   # Download handlers
@@ -9983,11 +9926,10 @@ server <- function(input, output, session) {
     }
   )
 
-  # Ridgeline Plot handlers
+  #ridgeline plot handlers - stores data for reactive rendering
   observeEvent(input$generate_ridgeline, {
     waiter_show(html = loading_screen)
     
-    # Get data for selected species or all species
     species_data_list <- list()
     
     if (input$ridgeline_species == "all") {
@@ -10001,25 +9943,42 @@ server <- function(input, output, session) {
       species_data_list[[species_id]] <- get_species_data(species_id)
     }
     
-    #create the ridgeline plot
-    output$ridgeline_plot <- renderPlot({
-      if (input$ridgeline_view == "distribution") {
-        create_ridgeline_plot(
-          species_data_list = species_data_list,
-          is_dark_mode = is_dark(),
-          plot_settings = reactiveValuesToList(plot_settings)
-        )
-      } else {
-        create_threshold_ridgeline(
-          species_data_list = species_data_list,
-          threshold = input$expression_threshold,
-          is_dark_mode = is_dark(),
-          plot_settings = reactiveValuesToList(plot_settings)
-        )
-      }
-    })
+    plot_state$ridgeline_data <- list(
+      species_data_list = species_data_list,
+      view_type = input$ridgeline_view,
+      threshold = input$expression_threshold
+    )
+    plot_state$ridgeline_ready <- TRUE
     
     waiter_hide()
+  })
+  
+  #ridgeline plot render - reactive to plot_state and plot_settings
+  output$ridgeline_plot <- renderPlot({
+    if (!isTRUE(plot_state$ridgeline_ready) || is.null(plot_state$ridgeline_data)) {
+      plot.new()
+      text(0.5, 0.5, "Click Generate Plot to create ridgeline visualization", col = "gray50", cex = 1.2)
+      return()
+    }
+    
+    rd <- plot_state$ridgeline_data
+    dark_mode <- is_dark()
+    current_settings <- reactiveValuesToList(plot_settings)
+    
+    if (rd$view_type == "distribution") {
+      create_ridgeline_plot(
+        species_data_list = rd$species_data_list,
+        is_dark_mode = dark_mode,
+        plot_settings = current_settings
+      )
+    } else {
+      create_threshold_ridgeline(
+        species_data_list = rd$species_data_list,
+        threshold = rd$threshold,
+        is_dark_mode = dark_mode,
+        plot_settings = current_settings
+      )
+    }
   })
   
   #global search observer 
