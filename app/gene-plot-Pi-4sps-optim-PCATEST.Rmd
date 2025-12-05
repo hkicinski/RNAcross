@@ -6849,6 +6849,7 @@ server <- function(input, output, session) {
     species_shapes = list(),
     species_colors_custom = list(),
     species_shapes_custom = list(),
+    palette_changing = FALSE,
     
     #multi-gene line/point encoding
     encoding_multigene_color = "species",
@@ -7821,9 +7822,20 @@ server <- function(input, output, session) {
     do.call(tagList, picker_list)
   })
   
-  #update settings from modal inputs
+  #update settings from modal inputs - clear custom overrides when palette changes
   observeEvent(input$settings_species_palette, {
-    plot_settings$species_palette <- input$settings_species_palette
+    if (!identical(plot_settings$species_palette, input$settings_species_palette)) {
+      plot_settings$palette_changing <- TRUE
+      plot_settings$species_colors_custom <- list()
+      plot_settings$species_palette <- input$settings_species_palette
+    }
+  })
+  
+  #reset palette_changing flag after a short delay
+  observe({
+    req(isTRUE(plot_settings$palette_changing))
+    invalidateLater(200)
+    plot_settings$palette_changing <- FALSE
   })
   
   observeEvent(input$settings_multigene_color, {
@@ -7898,38 +7910,57 @@ server <- function(input, output, session) {
     plot_settings$export_dpi <- input$settings_export_dpi
   })
   
-  #collect custom species colors from pickers
+  #collect custom species colors from pickers - only store if different from palette
   observe({
+    req(plot_settings$initialized)
+    req(!isTRUE(plot_settings$palette_changing))
+    
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
+    
+    #get palette colors to compare against
+    palette_colors <- get_palette_colors(plot_settings$species_palette, length(species_list))
+    palette_map <- setNames(palette_colors, species_list)
+    
     custom <- list()
     for (sp in species_list) {
       input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
       val <- input[[input_id]]
       if (!is.null(val)) {
-        custom[[sp]] <- val
+        #only add to custom if different from palette color
+        palette_col <- toupper(palette_map[[sp]])
+        picked_col <- toupper(val)
+        if (!identical(palette_col, picked_col)) {
+          custom[[sp]] <- val
+        }
       }
     }
-    if (length(custom) > 0) {
-      plot_settings$species_colors_custom <- custom
-    }
+    plot_settings$species_colors_custom <- custom
   })
   
-  #collect custom species shapes from pickers - stores to custom list which triggers derive
+  #collect custom species shapes from pickers - only store if different from default
   observe({
+    req(plot_settings$initialized)
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
+    n <- length(species_list)
+    
+    #get default shapes to compare against
+    default_shapes <- SHAPES_DEFAULT[((seq_len(n) - 1) %% length(SHAPES_DEFAULT)) + 1]
+    default_map <- setNames(as.integer(default_shapes), species_list)
+    
     custom <- list()
     for (sp in species_list) {
       input_id <- paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp))
       val <- input[[input_id]]
       if (!is.null(val)) {
-        custom[[sp]] <- as.integer(val)
+        #only add to custom if different from default shape
+        if (as.integer(val) != default_map[[sp]]) {
+          custom[[sp]] <- as.integer(val)
+        }
       }
     }
-    if (length(custom) > 0) {
-      plot_settings$species_shapes_custom <- custom
-    }
+    plot_settings$species_shapes_custom <- custom
   })
   
   #apply preset
