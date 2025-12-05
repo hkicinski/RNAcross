@@ -7743,10 +7743,10 @@ server <- function(input, output, session) {
         colourpicker::updateColourInput(session, input_id, value = new_colors[[sp]])
       }
     }
-    #reset flag after flush to allow individual picker changes
-    shiny::onFlushed(function() {
+    #reset flag after client round-trip completes
+    later::later(function() {
       plot_settings$updating_colors_from_palette <- FALSE
-    }, once = TRUE)
+    }, delay = 0.3)
   })
   
   observeEvent(input$settings_multigene_color, {
@@ -7825,15 +7825,18 @@ server <- function(input, output, session) {
   observe({
     req(plot_settings$initialized)
     #skip if palette update is in progress to avoid reactive loop
-    if (isTRUE(plot_settings$updating_colors_from_palette)) return()
-    config <- current_species_config()
+    #use isolate to prevent flag changes from re-triggering this observer
+    if (isTRUE(isolate(plot_settings$updating_colors_from_palette))) return()
+    config <- isolate(current_species_config())
     species_list <- sapply(config, function(x) x$short)
     
     for (sp in species_list) {
       input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
       val <- input[[input_id]]
-      if (!is.null(val) && !is.null(plot_settings$species_colors[[sp]])) {
-        if (val != plot_settings$species_colors[[sp]]) {
+      #isolate stored color read so this observer only triggers on input changes
+      stored_color <- isolate(plot_settings$species_colors[[sp]])
+      if (!is.null(val) && !is.null(stored_color)) {
+        if (val != stored_color) {
           plot_settings$species_colors[[sp]] <- val
           #also update full name key
           sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
