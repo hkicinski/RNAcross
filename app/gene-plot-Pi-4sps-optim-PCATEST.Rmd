@@ -418,34 +418,56 @@ get_palette_colors <- function(palette_name, n) {
   return(DYNAMIC_COLOR_PALETTE[1:min(n, length(DYNAMIC_COLOR_PALETTE))])
 }
 
-#derive species colors from palette and config
-derive_species_colors <- function(species_list, palette_name, custom_overrides = NULL) {
+#derive species colors from palette
+#stores colors keyed by short name AND full name for flexible lookup
+derive_species_colors <- function(species_list, palette_name, unused = NULL, config = NULL) {
   n <- length(species_list)
   base_colors <- get_palette_colors(palette_name, n)
-  colors <- setNames(base_colors, species_list)
-  if (!is.null(custom_overrides)) {
-    for (sp in names(custom_overrides)) {
-      if (sp %in% names(colors)) {
-        colors[[sp]] <- custom_overrides[[sp]]
+  result <- as.list(setNames(base_colors, species_list))
+  if (!is.null(config)) {
+    for (sp_code in names(config)) {
+      sp_short <- config[[sp_code]]$short
+      sp_full <- config[[sp_code]]$name
+      if (sp_short %in% names(result)) {
+        result[[sp_full]] <- result[[sp_short]]
       }
     }
   }
-  as.list(colors)
+  result
 }
 
-#derive species shapes from defaults and overrides
-derive_species_shapes <- function(species_list, custom_overrides = NULL) {
+#derive species shapes from defaults
+#stores shapes keyed by short name AND full name for flexible lookup
+derive_species_shapes <- function(species_list, unused = NULL, config = NULL) {
   n <- length(species_list)
   base_shapes <- SHAPES_DEFAULT[((seq_len(n) - 1) %% length(SHAPES_DEFAULT)) + 1]
-  shapes <- setNames(as.integer(base_shapes), species_list)
-  if (!is.null(custom_overrides)) {
-    for (sp in names(custom_overrides)) {
-      if (sp %in% names(shapes)) {
-        shapes[[sp]] <- as.integer(custom_overrides[[sp]])
+  result <- as.list(setNames(as.integer(base_shapes), species_list))
+  if (!is.null(config)) {
+    for (sp_code in names(config)) {
+      sp_short <- config[[sp_code]]$short
+      sp_full <- config[[sp_code]]$name
+      if (sp_short %in% names(result)) {
+        result[[sp_full]] <- result[[sp_short]]
       }
     }
   }
-  as.list(shapes)
+  result
+}
+
+#helper to resolve species color from any name format
+resolve_species_color <- function(species_name, settings_colors, fallback = "#808080") {
+  if (species_name %in% names(settings_colors)) {
+    return(settings_colors[[species_name]])
+  }
+  fallback
+}
+
+#helper to resolve species shape from any name format
+resolve_species_shape <- function(species_name, settings_shapes, fallback = 16L) {
+  if (species_name %in% names(settings_shapes)) {
+    return(as.integer(settings_shapes[[species_name]]))
+  }
+  as.integer(fallback)
 }
 
 #get aesthetic mappings for multi-gene plots
@@ -507,10 +529,8 @@ generate_default_settings <- function(species_config) {
   species_list <- sapply(species_config, function(x) x$short)
   list(
     species_palette = "Dark2",
-    species_colors = derive_species_colors(species_list, "Dark2"),
-    species_shapes = derive_species_shapes(species_list),
-    species_colors_custom = list(),
-    species_shapes_custom = list(),
+    species_colors = derive_species_colors(species_list, "Dark2", NULL, species_config),
+    species_shapes = derive_species_shapes(species_list, NULL, species_config),
     encoding_multigene_color = "species",
     encoding_multigene_secondary = "linetype",
     gene_palette = "Set2",
@@ -1572,6 +1592,13 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
       "#440154"
     }
     
+    #get species shape from settings or fallback
+    species_shape <- if (!is.null(plot_settings) && species_name %in% names(plot_settings$species_shapes)) {
+      as.integer(plot_settings$species_shapes[[species_name]])
+    } else {
+      16L
+    }
+    
     # Normalize timepoint format (handle both "0min" and "0" formats)
     normalized_timepoints <- sample_info$Timepoint
     normalized_timepoints <- gsub("^(\\d+)$", "\\1min", normalized_timepoints)  # Add "min" if missing
@@ -1601,7 +1628,7 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
     }
     
     p <- ggplot(dt, aes(x = Timepoint, y = exn, color = factor(Replicate), group = Replicate)) +
-      geom_point(size = 3) + 
+      geom_point(size = 3, shape = species_shape) + 
       geom_line(linewidth = 1) +
       scale_color_manual(values = replicate_colors) +
       labs(
@@ -3328,21 +3355,58 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     plot_data <- merge(plot_data, sample_metadata, by = "Sample")
     plot_data$Timepoint <- factor(plot_data$Timepoint, levels = TIME_POINTS)
     
-    # Set plot styling
+    #set plot styling
     plot_bg_color <- if(is_dark_mode) "#2c3034" else "white"
     text_color <- if(is_dark_mode) "white" else "black"
     grid_color <- if(is_dark_mode) "gray30" else "gray90"
     
-    # Create plot
-    p <- ggplot(plot_data, aes(x = PC1, y = PC2, 
-                               color = Timepoint,
-                               shape = Species,
-                               text = paste0("Sample: ", Sample, 
-                                             "<br>Species: ", Species, 
-                                             "<br>Timepoint: ", Timepoint))) +
-      geom_point(size = 4, alpha = 0.8) +
-      scale_color_viridis(discrete = TRUE, option = "viridis") +
-      scale_shape_manual(values = c(16, 17, 15, 18)) +
+    #get settings with defaults
+    point_size <- if (!is.null(plot_settings$pca_point_size)) plot_settings$pca_point_size else 4
+    point_alpha <- if (!is.null(plot_settings$pca_alpha)) plot_settings$pca_alpha else 0.8
+    encoding_color <- if (!is.null(plot_settings$encoding_pca_color)) plot_settings$encoding_pca_color else "timepoint"
+    encoding_shape <- if (!is.null(plot_settings$encoding_pca_shape)) plot_settings$encoding_pca_shape else "species"
+    species_colors <- if (!is.null(plot_settings$species_colors)) plot_settings$species_colors else list()
+    species_shapes <- if (!is.null(plot_settings$species_shapes)) plot_settings$species_shapes else list()
+    
+    #build color and shape vectors for species
+    unique_species <- unique(plot_data$Species)
+    shape_vec <- sapply(unique_species, function(sp) {
+      resolve_species_shape(sp, species_shapes, 16L)
+    })
+    names(shape_vec) <- unique_species
+    
+    color_vec <- sapply(unique_species, function(sp) {
+      resolve_species_color(sp, species_colors, "#808080")
+    })
+    names(color_vec) <- unique_species
+    
+    #create plot with encoding settings
+    hover_text <- paste0("Sample: ", plot_data$Sample, 
+                         "<br>Species: ", plot_data$Species, 
+                         "<br>Timepoint: ", plot_data$Timepoint)
+    plot_data$hover_text <- hover_text
+    
+    if (encoding_color == "species" && encoding_shape == "species") {
+      p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Species, shape = Species, text = hover_text)) +
+        geom_point(size = point_size, alpha = point_alpha) +
+        scale_color_manual(values = color_vec) +
+        scale_shape_manual(values = shape_vec)
+    } else if (encoding_color == "species" && encoding_shape == "none") {
+      p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Species, text = hover_text)) +
+        geom_point(size = point_size, alpha = point_alpha) +
+        scale_color_manual(values = color_vec)
+    } else if (encoding_color == "timepoint" && encoding_shape == "species") {
+      p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Timepoint, shape = Species, text = hover_text)) +
+        geom_point(size = point_size, alpha = point_alpha) +
+        scale_color_viridis(discrete = TRUE, option = "viridis") +
+        scale_shape_manual(values = shape_vec)
+    } else {
+      p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Timepoint, text = hover_text)) +
+        geom_point(size = point_size, alpha = point_alpha) +
+        scale_color_viridis(discrete = TRUE, option = "viridis")
+    }
+    
+    p <- p +
       labs(
         x = sprintf("PC1 (%.1f%%)", var_explained[1]),
         y = sprintf("PC2 (%.1f%%)", var_explained[2]),
@@ -3673,25 +3737,9 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
       }
     }
   } else {
-    # No dynamic colors provided, use defaults based on species names
-    species_colors <- list()
-    for (sp_name in unique_species) {
-      if (grepl("albicans", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "#74ac4c"  # Green
-      } else if (grepl("glabrata", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "red"  # Red  
-      } else if (grepl("lactis", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "#f8c434"  # Yellow
-      } else if (grepl("cerevisiae", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "blue"  # Blue
-      } else {
-        # Default colors for unknown species
-        default_palette <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
-                            "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F")
-        idx <- (which(unique_species == sp_name) - 1) %% length(default_palette) + 1
-        species_colors[[sp_name]] <- default_palette[idx]
-      }
-    }
+    #no dynamic colors provided, generate from Dark2 palette
+    palette_colors <- get_palette_colors("Dark2", length(unique_species))
+    species_colors <- as.list(setNames(palette_colors, unique_species))
   }
   
   # Build species mapping dynamically from config if provided
@@ -3724,15 +3772,18 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
   colnames(species_matrix) <- column_names
   rownames(species_matrix) <- "Species"
   
-  # Custom colorscale for species bar - ALWAYS use position-based colors
+  #custom colorscale for species bar using settings colors
   colorscale <- lapply(seq_along(unique_species), function(i) {
     species <- unique_species[i]
     
-    # IGNORE species_colors parameter completely - always use dynamic palette
-    dynamic_palette <- c("#808080", "#FFB6C1", "#8B4513", "#A52A2A", 
-                        "#4682B4", "#32CD32", "#FF6347", "#9370DB",
-                        "#20B2AA", "#FF69B4", "#CD853F", "#00CED1")
-    species_color <- dynamic_palette[((i - 1) %% length(dynamic_palette)) + 1]
+    #use species_colors from settings, fallback to palette
+    fallback_palette <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
+                          "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F")
+    species_color <- if (species %in% names(species_colors)) {
+      species_colors[[species]]
+    } else {
+      fallback_palette[((i - 1) %% length(fallback_palette)) + 1]
+    }
     
     return(list(
       (i-1)/(max(1, length(unique_species)-1)),
@@ -4239,27 +4290,14 @@ generate_cross_species_heatmap <- function(gene_list, species_data_list,
   # prepare heatmap matrix
   heatmap_matrix <- prepare_heatmap_matrix(expression_data, normalization)
   
-  # create heatmap
-  #get dynamic colors for current species configuration
+  #use species colors from plot_settings, fallback to palette
   dynamic_colors <- NULL
-  if (!is.null(config)) {
-    auto_colors <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", 
-                     "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
-                     "#BB8FCE", "#85C1E2", "#F8B739", "#52BE80")
-    color_index <- 1
-    dynamic_colors <- list()
-    
-    for (sp_code in names(config)) {
-      sp_short <- config[[sp_code]]$short
-      # Check if this species has a predefined color in DEFAULT_SPECIES_COLORS
-      if (sp_short %in% names(DEFAULT_SPECIES_COLORS)) {
-        dynamic_colors[[sp_short]] <- DEFAULT_SPECIES_COLORS[[sp_short]]
-      } else {
-        # Assign from auto_colors palette
-        dynamic_colors[[sp_short]] <- auto_colors[color_index]
-        color_index <- ((color_index - 1) %% length(auto_colors)) + 1
-      }
-    }
+  if (!is.null(plot_settings) && length(plot_settings$species_colors) > 0) {
+    dynamic_colors <- plot_settings$species_colors
+  } else if (!is.null(config)) {
+    species_list <- sapply(config, function(x) x$short)
+    palette_name <- if (!is.null(plot_settings$species_palette)) plot_settings$species_palette else "Dark2"
+    dynamic_colors <- derive_species_colors(species_list, palette_name, NULL, config)
   }
   
   heatmap_plot <- create_cross_species_heatmap(
@@ -6763,8 +6801,7 @@ server <- function(input, output, session) {
     species_palette = "Dark2",
     species_colors = list(),
     species_shapes = list(),
-    species_colors_custom = list(),
-    species_shapes_custom = list(),
+    updating_colors_from_palette = FALSE,
     
     #multi-gene line/point encoding
     encoding_multigene_color = "species",
@@ -6832,50 +6869,16 @@ server <- function(input, output, session) {
     plot_settings$initialized <- TRUE
   })
   
-  #update species colors when palette changes
-  observeEvent(plot_settings$species_palette, {
-    req(plot_settings$initialized)
-    config <- current_species_config()
-    species_list <- sapply(config, function(x) x$short)
-    plot_settings$species_colors <- derive_species_colors(
-      species_list,
-      plot_settings$species_palette,
-      plot_settings$species_colors_custom
-    )
-  })
-  
-  #update species colors when custom overrides change
-  observeEvent(plot_settings$species_colors_custom, {
-    req(plot_settings$initialized)
-    config <- current_species_config()
-    species_list <- sapply(config, function(x) x$short)
-    plot_settings$species_colors <- derive_species_colors(
-      species_list,
-      plot_settings$species_palette,
-      plot_settings$species_colors_custom
-    )
-  }, ignoreInit = TRUE)
   
   #dynamic color assignment reads from plot_settings
   species_colors_dynamic <- reactive({
-    if (plot_settings$initialized) {
+    if (plot_settings$initialized && length(plot_settings$species_colors) > 0) {
       return(plot_settings$species_colors)
     }
-    #fallback to old logic if settings not initialized
+    #fallback: generate from current palette setting
     config <- current_species_config()
-    colors <- list()
-    auto_colors <- DYNAMIC_COLOR_PALETTE
-    color_index <- 1
-    for (sp_code in names(config)) {
-      sp_short <- config[[sp_code]]$short
-      if (sp_short %in% names(DEFAULT_SPECIES_COLORS)) {
-        colors[[sp_short]] <- DEFAULT_SPECIES_COLORS[[sp_short]]
-      } else {
-        colors[[sp_short]] <- auto_colors[color_index]
-        color_index <- ((color_index - 1) %% length(auto_colors)) + 1
-      }
-    }
-    colors
+    species_list <- sapply(config, function(x) x$short)
+    derive_species_colors(species_list, plot_settings$species_palette, NULL, config)
   })
   
   # Display current species table
@@ -7723,9 +7726,27 @@ server <- function(input, output, session) {
     do.call(tagList, picker_list)
   })
   
-  #update settings from modal inputs
+  #update species colors when palette changes - regenerates all colors from palette
   observeEvent(input$settings_species_palette, {
+    req(plot_settings$initialized)
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
     plot_settings$species_palette <- input$settings_species_palette
+    new_colors <- derive_species_colors(species_list, input$settings_species_palette, NULL, config)
+    plot_settings$species_colors <- new_colors
+    #flag to prevent individual picker observer from triggering during palette update
+    plot_settings$updating_colors_from_palette <- TRUE
+    #update colourInput UI elements to reflect new palette
+    for (sp in species_list) {
+      input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
+      if (sp %in% names(new_colors)) {
+        colourpicker::updateColourInput(session, input_id, value = new_colors[[sp]])
+      }
+    }
+    #reset flag after client round-trip completes
+    later::later(function() {
+      plot_settings$updating_colors_from_palette <- FALSE
+    }, delay = 0.3)
   })
   
   observeEvent(input$settings_multigene_color, {
@@ -7800,37 +7821,52 @@ server <- function(input, output, session) {
     plot_settings$export_dpi <- input$settings_export_dpi
   })
   
-  #collect custom species colors from pickers
+  #update species_colors directly when individual color pickers change
   observe({
-    config <- current_species_config()
+    req(plot_settings$initialized)
+    #skip if palette update is in progress to avoid reactive loop
+    #use isolate to prevent flag changes from re-triggering this observer
+    if (isTRUE(isolate(plot_settings$updating_colors_from_palette))) return()
+    config <- isolate(current_species_config())
     species_list <- sapply(config, function(x) x$short)
-    custom <- list()
+    
     for (sp in species_list) {
       input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
       val <- input[[input_id]]
-      if (!is.null(val)) {
-        custom[[sp]] <- val
+      #isolate stored color read so this observer only triggers on input changes
+      stored_color <- isolate(plot_settings$species_colors[[sp]])
+      if (!is.null(val) && !is.null(stored_color)) {
+        if (val != stored_color) {
+          plot_settings$species_colors[[sp]] <- val
+          #also update full name key
+          sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
+          if (!is.null(sp_full)) {
+            plot_settings$species_colors[[sp_full]] <- val
+          }
+        }
       }
-    }
-    if (length(custom) > 0) {
-      plot_settings$species_colors_custom <- custom
     }
   })
   
-  #collect custom species shapes from pickers
+  #update species_shapes directly when individual shape pickers change
   observe({
+    req(plot_settings$initialized)
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
-    custom <- list()
+    
     for (sp in species_list) {
       input_id <- paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp))
       val <- input[[input_id]]
-      if (!is.null(val)) {
-        custom[[sp]] <- as.integer(val)
+      if (!is.null(val) && !is.null(plot_settings$species_shapes[[sp]])) {
+        if (as.integer(val) != plot_settings$species_shapes[[sp]]) {
+          plot_settings$species_shapes[[sp]] <- as.integer(val)
+          #also update full name key
+          sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
+          if (!is.null(sp_full)) {
+            plot_settings$species_shapes[[sp_full]] <- as.integer(val)
+          }
+        }
       }
-    }
-    if (length(custom) > 0) {
-      plot_settings$species_shapes <- custom
     }
   })
   
@@ -7871,8 +7907,6 @@ server <- function(input, output, session) {
     for (key in names(defaults)) {
       plot_settings[[key]] <- defaults[[key]]
     }
-    plot_settings$species_colors_custom <- list()
-    plot_settings$species_shapes_custom <- list()
     showNotification("Settings reset to defaults", type = "message")
     removeModal()
   })
@@ -8604,7 +8638,11 @@ server <- function(input, output, session) {
     
     plot_data <- plot_state$combined_data
     dark_mode <- is_dark()
+    config <- current_species_config()
     settings_colors <- plot_settings$species_colors
+    settings_shapes <- plot_settings$species_shapes
+    encoding_color <- plot_settings$encoding_multigene_color
+    encoding_secondary <- plot_settings$encoding_multigene_secondary
     normalize_baseline <- isTRUE(input$normalize_to_baseline)
     transform_type <- input$global_transform
     
@@ -8619,35 +8657,96 @@ server <- function(input, output, session) {
         select(-Baseline)
     }
     
-    plot_data$GeneSpecies <- paste(plot_data$Gene, "-", plot_data$Species)
-    unique_combinations <- unique(plot_data$GeneSpecies)
-    
-    color_map <- list()
-    for (combo in unique_combinations) {
-      sp <- sub("^.* - ", "", combo)
-      color_map[[combo]] <- if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
+    #build color map using SpeciesCode for reliable lookup
+    species_color_map <- list()
+    species_shape_map <- list()
+    for (sp_code in unique(plot_data$SpeciesCode)) {
+      sp_short <- config[[sp_code]]$short
+      species_color_map[[sp_code]] <- resolve_species_color(sp_short, settings_colors, "#808080")
+      species_shape_map[[sp_code]] <- resolve_species_shape(sp_short, settings_shapes, 16L)
     }
     
+    plot_data$GeneSpecies <- paste(plot_data$Gene, "-", plot_data$Species)
     plot_data$GeneSpeciesRep <- paste(plot_data$GeneSpecies, "Rep", plot_data$Replicate)
+    plot_data$SpeciesColor <- sapply(plot_data$SpeciesCode, function(sc) species_color_map[[sc]])
+    plot_data$SpeciesShape <- sapply(plot_data$SpeciesCode, function(sc) species_shape_map[[sc]])
     
+    unique_combinations <- unique(plot_data$GeneSpecies)
+    unique_genes <- unique(plot_data$Gene)
+    unique_species <- unique(plot_data$SpeciesCode)
+    n_genes <- length(unique_genes)
+    n_species <- length(unique_species)
+    
+    #build color vector for gene-species-replicate combinations
     color_vector <- c()
     rep_labels <- c()
     for (combo in unique_combinations) {
-      base_color <- color_map[[combo]]
+      row_match <- plot_data[plot_data$GeneSpecies == combo, ][1, ]
+      base_color <- species_color_map[[row_match$SpeciesCode]]
       color_vector <- c(color_vector, base_color, adjustcolor(base_color, alpha.f = 0.6))
       rep_labels <- c(rep_labels, paste(combo, "Rep 1"), paste(combo, "Rep 2"))
     }
     names(color_vector) <- rep_labels
+    
+    #build shape mapping based on encoding settings
+    shape_aes <- NULL
+    shape_scale <- NULL
+    if (encoding_secondary == "shape" && n_genes <= 6) {
+      plot_data$ShapeVar <- plot_data$Gene
+      shape_aes <- aes(shape = ShapeVar)
+      gene_shapes <- setNames(SHAPES_DEFAULT[1:n_genes], unique_genes)
+      shape_scale <- scale_shape_manual(values = gene_shapes, name = "Gene")
+    } else if (encoding_secondary == "shape" && n_species <= 6) {
+      plot_data$ShapeVar <- plot_data$SpeciesCode
+      shape_aes <- aes(shape = ShapeVar)
+      species_shape_vec <- sapply(unique_species, function(sc) species_shape_map[[sc]])
+      names(species_shape_vec) <- unique_species
+      shape_scale <- scale_shape_manual(values = species_shape_vec, name = "Species")
+    }
+    
+    #build linetype mapping based on encoding settings
+    linetype_aes <- NULL
+    linetype_scale <- NULL
+    if (encoding_secondary == "linetype" && n_genes <= 6) {
+      plot_data$LinetypeVar <- plot_data$Gene
+      linetype_aes <- aes(linetype = LinetypeVar)
+      gene_linetypes <- setNames(LINETYPES_DEFAULT[1:n_genes], unique_genes)
+      linetype_scale <- scale_linetype_manual(values = gene_linetypes, name = "Gene")
+    }
     
     expr_label <- if (normalize_baseline) "log2 FC" else "Expression"
     
     p <- ggplot(plot_data,
                 aes(x = Timepoint, y = Expression, color = GeneSpeciesRep, group = GeneSpeciesRep,
                     text = paste("Gene:", Gene, "<br>Species:", Species, "<br>Replicate:", Replicate,
-                                 "<br>Time:", Timepoint, paste0("<br>", expr_label, ": "), round(Expression, 2)))) +
+                                 "<br>Time:", Timepoint, paste0("<br>", expr_label, ": "), round(Expression, 2))))
+    
+    #add shape aesthetic if configured
+    if (!is.null(shape_aes)) {
+      p <- p + shape_aes
+    }
+    
+    #add linetype aesthetic if configured
+    if (!is.null(linetype_aes)) {
+      p <- p + linetype_aes
+    }
+    
+    p <- p +
       geom_point(size = 3, alpha = 0.8) +
       geom_line(linewidth = 1.2, alpha = 0.9) +
-      scale_color_manual(values = color_vector, name = "Gene - Species", breaks = names(color_vector), labels = names(color_vector)) +
+      scale_color_manual(values = color_vector, name = "Gene - Species", breaks = names(color_vector), labels = names(color_vector))
+    
+    #add shape scale if configured
+    if (!is.null(shape_scale)) {
+      p <- p + shape_scale
+    }
+    
+    #add linetype scale if configured
+    if (!is.null(linetype_scale)) {
+      p <- p + linetype_scale
+    }
+    
+    p <- p +
       labs(
         y = if (normalize_baseline) "log2 Fold-Change (vs. 0 min)" else get_expression_label(transform_type),
         title = "Cross-species Expression Comparison",
