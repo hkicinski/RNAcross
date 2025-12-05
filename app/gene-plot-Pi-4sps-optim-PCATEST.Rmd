@@ -2440,7 +2440,7 @@ calculate_subplot_grid <- function(n_species) {
   }
 }
 
-# group visualization
+#group visualization
 create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE,
                                      distance_method = "pearson", 
                                      linkage_method = "average",
@@ -2448,7 +2448,8 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
                                      show_significance = TRUE,
                                      alpha = 0.05,
                                      selected_gene = NULL,
-                                     selected_comparisons = NULL) {
+                                     selected_comparisons = NULL,
+                                     plot_settings = NULL) {
   plot_bg_color <- if(is_dark_mode) "#2c3034" else "white"
   text_color <- if(is_dark_mode) "white" else "black"
   grid_color <- if(is_dark_mode) "gray30" else "gray90"
@@ -2720,17 +2721,20 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
     #convert NA to NaN to prevent plotly nacolor warning
     transformed_matrix[is.na(transformed_matrix)] <- NaN
     
+    #get heatmap palette from settings or use default
+    hm_colorscale <- if (!is.null(plot_settings) && !is.null(plot_settings$heatmap_palette)) {
+      plot_settings$heatmap_palette
+    } else {
+      list(c(0, "#0000FF"), c(0.5, "#000000"), c(1, "#FFFF00"))
+    }
+    
     #create heatmap with clustering info in title
     p <- plot_ly(
       z = transformed_matrix,
       x = colnames(transformed_matrix),
       y = rownames(transformed_matrix),
       type = "heatmap",
-      colorscale = list(
-        c(0, "#0000FF"),
-        c(0.5, "#000000"),
-        c(1, "#FFFF00")
-      ),
+      colorscale = hm_colorscale,
       zmid = plot_params$zmid,
       zmin = plot_params$zmin,
       zmax = plot_params$zmax,
@@ -3646,10 +3650,11 @@ prepare_heatmap_matrix <- function(expression_data, normalization = "zscore") {
   return(hm_matrix)
 }
 
-# create a cross-species heatmap visualization
+#create a cross-species heatmap visualization
 create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE, 
                                          cluster_rows = TRUE, cluster_cols = FALSE,
-                                         config = NULL, species_colors_dynamic = NULL) {
+                                         config = NULL, species_colors_dynamic = NULL,
+                                         plot_settings = NULL) {
   # Set color scheme based on dark mode
   plot_bg_color <- if(is_dark_mode) "#2c3034" else "white"
   text_color <- if(is_dark_mode) "white" else "black"
@@ -3825,24 +3830,31 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
     byrow = TRUE
   )
   
+  #get heatmap palette from settings or use default
+  hm_colorscale <- if (!is.null(plot_settings) && !is.null(plot_settings$heatmap_palette)) {
+    plot_settings$heatmap_palette
+  } else {
+    "viridis"
+  }
+  
   p2 <- plot_ly(
     z = heatmap_matrix,
     x = column_names,
     y = rownames(heatmap_matrix),
     type = "heatmap",
-    colorscale = "viridis",  
+    colorscale = hm_colorscale,  
     zmin = -3, 
     zmax = 3,
     zmid = 0,
     hoverinfo = "text",
     text = hover_text_matrix,
-    showscale = TRUE,  # Explicitly show the colorbar scale
+    showscale = TRUE,
     colorbar = list(
       title = "Z-score",
-      len = 0.6,       # Longer colorbar (was 0.4)
-      thickness = 20,  # Thicker colorbar (was 15)
-      y = 1.1,        # Higher position (was 0.77)
-      x = 0.878,        # More to the right (was 0.85)
+      len = 0.6,
+      thickness = 20,
+      y = 1.1,
+      x = 0.878,
       outlinewidth = 1
     )
   )
@@ -4049,7 +4061,7 @@ create_ortholog_table <- function(gene_mapping, config = NULL) {
 }
 
 #ridgeline plot (optimized with list collection)
-create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE) {
+create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE, plot_settings = NULL) {
   #preallocate list for faster data collection
   data_list <- vector("list", length = sum(sapply(species_data_list, function(x) {
     sample_info <- if("sample_info" %in% names(x)) x$sample_info else x[[paste0(names(species_data_list)[1], "_sample_info")]]
@@ -4098,11 +4110,23 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE) {
   text_color <- if(is_dark_mode) "white" else "black"
   grid_color <- if(is_dark_mode) "gray30" else "gray90"
   
-  # Create ridgeline plot with ggplot2 and ggridges
+  #get ridgeline settings
+  ridgeline_pal <- if (!is.null(plot_settings) && !is.null(plot_settings$ridgeline_palette)) {
+    plot_settings$ridgeline_palette
+  } else {
+    "viridis"
+  }
+  ridgeline_alpha <- if (!is.null(plot_settings) && !is.null(plot_settings$ridgeline_alpha)) {
+    plot_settings$ridgeline_alpha
+  } else {
+    0.7
+  }
+  
+  #create ridgeline plot with ggplot2 and ggridges
   p <- ggplot(all_density_data, 
              aes(x = Expression, y = Timepoint, fill = Timepoint)) +
-    geom_density_ridges(scale = 2, alpha = 0.7, quantile_lines = TRUE) +
-    scale_fill_viridis(discrete = TRUE) +
+    geom_density_ridges(scale = 2, alpha = ridgeline_alpha, quantile_lines = TRUE) +
+    scale_fill_viridis(discrete = TRUE, option = ridgeline_pal) +
     facet_wrap(~ Species, scales = "free_y") +
     labs(
       title = "Gene Expression Distribution Across Timepoints",
@@ -4129,7 +4153,7 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE) {
 }
 
 #gene count threshold plot (optimized)
-create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark_mode = FALSE) {
+create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark_mode = FALSE, plot_settings = NULL) {
   count_list <- list()
   list_idx <- 1
   
@@ -4174,12 +4198,19 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
   text_color <- if(is_dark_mode) "white" else "black"
   grid_color <- if(is_dark_mode) "gray30" else "gray90"
   
-  # Create bar plot
+  #get ridgeline settings
+  ridgeline_pal <- if (!is.null(plot_settings) && !is.null(plot_settings$ridgeline_palette)) {
+    plot_settings$ridgeline_palette
+  } else {
+    "viridis"
+  }
+  
+  #create bar plot
   p <- ggplot(count_data, 
              aes(x = Timepoint, y = PercentAbove, fill = Timepoint)) +
     geom_bar(stat = "identity", position = "dodge") +
     facet_wrap(~ Species) +
-    scale_fill_viridis(discrete = TRUE) +
+    scale_fill_viridis(discrete = TRUE, option = ridgeline_pal) +
     labs(
       title = paste("Percentage of Genes with Expression Above", threshold, "log2 CPM"),
       x = "Timepoint",
@@ -4205,7 +4236,7 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
   return(p)
 }
 
-# main function to orchestrate the cross-species heatmap creation
+#main function to orchestrate the cross-species heatmap creation
 generate_cross_species_heatmap <- function(gene_list, species_data_list, 
                                            normalization = "zscore", 
                                            is_dark_mode = FALSE,
@@ -4213,7 +4244,8 @@ generate_cross_species_heatmap <- function(gene_list, species_data_list,
                                            cluster_cols = FALSE,
                                            config = NULL,
                                            all_species_data = NULL,
-                                           transform_type = "lcpm") {
+                                           transform_type = "lcpm",
+                                           plot_settings = NULL) {
   # clean up gene list - remove empty strings, trim whitespace
   gene_list <- gene_list[gene_list != ""]
   gene_list <- trimws(gene_list)
@@ -4265,7 +4297,8 @@ generate_cross_species_heatmap <- function(gene_list, species_data_list,
     cluster_rows = cluster_rows,
     cluster_cols = cluster_cols,
     config = config,
-    species_colors_dynamic = dynamic_colors
+    species_colors_dynamic = dynamic_colors,
+    plot_settings = plot_settings
   )
   
   # create ortholog table
@@ -8584,32 +8617,38 @@ server <- function(input, output, session) {
         #create a unique identifier for each gene-species combination
         plot_data$GeneSpecies <- paste(plot_data$Gene, "-", plot_data$Species)
         
-        # Create color palette for all unique gene-species combinations
+        #get species colors from plot_settings
+        settings_colors <- plot_settings$species_colors
+        unique_species <- unique(plot_data$Species)
         unique_combinations <- unique(plot_data$GeneSpecies)
         n_combinations <- length(unique_combinations)
         
-        # Use a color palette that can handle many colors
-        if (n_combinations <= 8) {
-          colors <- RColorBrewer::brewer.pal(max(3, n_combinations), "Set1")
-        } else {
-          colors <- colorRampPalette(RColorBrewer::brewer.pal(12, "Set3"))(n_combinations)
+        #build color map using species colors from settings
+        color_map <- list()
+        for (combo in unique_combinations) {
+          #extract species from combo (format: "Gene - Species")
+          sp <- sub("^.* - ", "", combo)
+          if (sp %in% names(settings_colors)) {
+            color_map[[combo]] <- settings_colors[[sp]]
+          } else {
+            #fallback color
+            color_map[[combo]] <- "#808080"
+          }
         }
         
-        color_map <- setNames(colors[1:n_combinations], unique_combinations)
-        
-        # Add replicate information
+        #add replicate information
         plot_data$GeneSpeciesRep <- paste(plot_data$GeneSpecies, "Rep", plot_data$Replicate)
         
-        # Create color vector with alpha for replicates
+        #create color vector with alpha for replicates
         color_vector <- c()
         for (combo in unique_combinations) {
-          base_color <- color_map[combo]
+          base_color <- color_map[[combo]]
           color_vector <- c(color_vector, 
-                            base_color,  # Rep 1 - full opacity
-                            adjustcolor(base_color, alpha.f = 0.6))  # Rep 2 - reduced opacity
+                            base_color,
+                            adjustcolor(base_color, alpha.f = 0.6))
         }
         
-        # Create proper labels for the color vector
+        #create proper labels for the color vector
         rep_labels <- c()
         for (combo in unique_combinations) {
           rep_labels <- c(rep_labels,
@@ -8777,7 +8816,7 @@ server <- function(input, output, session) {
       species_data_list[[species_id]] <- get_species_data(species_id)
     }
     
-    # generate the cross-species heatmap
+    #generate the cross-species heatmap
     result <- tryCatch({
       generate_cross_species_heatmap(
         gene_list = gene_list,
@@ -8788,7 +8827,8 @@ server <- function(input, output, session) {
         cluster_cols = input$cluster_cols,
         config = config,
         all_species_data = get_all_species_data(),
-        transform_type = input$global_transform
+        transform_type = input$global_transform,
+        plot_settings = reactiveValuesToList(plot_settings)
       )
     }, error = function(e) {
       list(
@@ -9596,7 +9636,7 @@ server <- function(input, output, session) {
         sig_test_params$gene <- input$sig_test_gene
         sig_test_params$comparisons <- input$sig_test_timepoints
         
-        # Regenerate the plot
+        #regenerate the plot
         output$gene_group_plot <- renderPlotly({
           create_group_visualization(
             plot_data = plot_data, 
@@ -9607,7 +9647,8 @@ server <- function(input, output, session) {
             show_significance = input$show_significance,
             alpha = input$significance_threshold,
             selected_gene = sig_test_params$gene,
-            selected_comparisons = sig_test_params$comparisons
+            selected_comparisons = sig_test_params$comparisons,
+            plot_settings = reactiveValuesToList(plot_settings)
           )
         })
       })
@@ -9637,6 +9678,14 @@ server <- function(input, output, session) {
               plot_data$Gene
             )
             
+            #get species colors from plot_settings
+            settings_colors <- plot_settings$species_colors
+            unique_species <- unique(plot_data$Species)
+            species_color_vec <- sapply(unique_species, function(sp) {
+              if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
+            })
+            names(species_color_vec) <- unique_species
+            
             #check if aggregation to species mean is requested
             if (!is.null(input$aggregation_level) && input$aggregation_level == "species_mean") {
               #calculate mean and SE for error bars
@@ -9648,6 +9697,7 @@ server <- function(input, output, session) {
                   .groups = 'drop'
                 )
               p <- plot_ly(plot_summary, x = ~Timepoint, y = ~Mean, color = ~Species,
+                           colors = species_color_vec,
                            type = 'scatter', mode = 'lines+markers',
                            error_y = list(
                              type = "data",
@@ -9658,14 +9708,28 @@ server <- function(input, output, session) {
                   title = "Multi-Species Mean Gene Expression",
                   xaxis = list(title = "Timepoint"),
                   yaxis = list(title = "Mean log2 CPM"),
-                  hovermode = "closest"
+                  hovermode = "closest",
+                  plot_bgcolor = if(is_dark()) "#2c3034" else "white",
+                  paper_bgcolor = if(is_dark()) "#2c3034" else "white",
+                  font = list(color = if(is_dark()) "white" else "black")
                 )
               return(p)
             }
+            
+            #build color map for gene-species combinations using species colors
+            unique_combos <- unique(paste(plot_data$GeneLabel, plot_data$Species, sep = " | "))
+            combo_colors <- sapply(unique_combos, function(combo) {
+              sp <- sub("^.* \\| ", "", combo)
+              if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
+            })
+            names(combo_colors) <- unique_combos
+            
             #create multi-species line plot with paralog distinction
+            plot_data$ComboLabel <- paste(plot_data$GeneLabel, plot_data$Species, sep = " | ")
+            
             p <- ggplot(plot_data, 
                         aes(x = Timepoint, y = Expression,
-                            color = interaction(GeneLabel, Species),
+                            color = ComboLabel,
                             group = interaction(GeneID, Species, Replicate),
                             text = paste("Gene:", GeneLabel,
                                          "<br>Gene ID:", GeneID,
@@ -9675,13 +9739,14 @@ server <- function(input, output, session) {
                                          "<br>Expression:", round(Expression, 2)))) +
               geom_point(size = 3, alpha = 0.8) +
               geom_line(linewidth = 1.2, alpha = 0.9) +
+              scale_color_manual(values = combo_colors) +
               labs(
                 y = "log2 count per million",
                 title = "Multi-Species Gene Set Expression",
                 subtitle = paste("Comparing", length(unique(plot_data$GeneID)), 
                                  "total orthologs across", length(unique(plot_data$Species)), "species"),
                 x = "Timepoint",
-                color = "Gene - Species"
+                color = "Gene | Species"
               ) +
               theme_minimal() +
               theme(
@@ -9707,14 +9772,16 @@ server <- function(input, output, session) {
                 font = list(color = if(is_dark()) "white" else "black")
               )
           } else if (input$group_viz_type == "heatmap") {
-            # Create multi-species heatmap
-            # Prepare data: average replicates first
+            #get heatmap palette from settings
+            hm_palette <- plot_settings$heatmap_palette
+            
+            #prepare data: average replicates first
             heatmap_data <- plot_data %>%
               group_by(Gene, Species, Timepoint) %>%
               summarise(AvgExpression = mean(Expression, na.rm = TRUE), .groups = 'drop') %>%
               mutate(GeneSpecies = paste(Gene, Species, sep = "_"))
             
-            # Create wide format matrix
+            #create wide format matrix
             hm_matrix <- heatmap_data %>%
               select(GeneSpecies, Timepoint, AvgExpression) %>%
               pivot_wider(names_from = Timepoint, values_from = AvgExpression) %>%
@@ -9750,7 +9817,7 @@ server <- function(input, output, session) {
               x = colnames(hm_matrix),
               y = rownames(hm_matrix),
               type = "heatmap",
-              colorscale = "Viridis",
+              colorscale = hm_palette,
               hoverinfo = "text",
               text = hm_hover
             ) %>%
@@ -9769,18 +9836,30 @@ server <- function(input, output, session) {
                 font = list(color = if(is_dark()) "white" else "black")
               )
           } else {
-            # For bar chart in multi-species mode
+            #for bar chart in multi-species mode - use species colors
+            settings_colors <- plot_settings$species_colors
+            
             summary_data <- plot_data %>%
               group_by(Timepoint, Species, Gene) %>%
-              summarise(Mean = mean(Expression, na.rm = TRUE), .groups = 'drop')
+              summarise(Mean = mean(Expression, na.rm = TRUE), .groups = 'drop') %>%
+              mutate(GeneSpecies = paste(Gene, Species, sep = " | "))
             
-            p <- ggplot(summary_data, aes(x = Timepoint, y = Mean, fill = interaction(Gene, Species))) +
+            #build color map for gene-species combinations using species colors
+            unique_combos <- unique(summary_data$GeneSpecies)
+            combo_colors <- sapply(unique_combos, function(combo) {
+              sp <- sub("^.* \\| ", "", combo)
+              if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
+            })
+            names(combo_colors) <- unique_combos
+            
+            p <- ggplot(summary_data, aes(x = Timepoint, y = Mean, fill = GeneSpecies)) +
               geom_bar(stat = "identity", position = "dodge") +
+              scale_fill_manual(values = combo_colors) +
               labs(
                 title = "Multi-Species Gene Set Expression",
                 y = "Mean log2 CPM",
                 x = "Timepoint",
-                fill = "Gene - Species"
+                fill = "Gene | Species"
               ) +
               theme_minimal() +
               theme(
@@ -9798,7 +9877,7 @@ server <- function(input, output, session) {
               )
           }
         } else {
-          # Single species mode - use existing visualization
+          #single species mode - use existing visualization
           create_group_visualization(
             plot_data = plot_data, 
             viz_type = input$group_viz_type, 
@@ -9808,7 +9887,8 @@ server <- function(input, output, session) {
             show_significance = input$show_significance,
             alpha = input$significance_threshold,
             selected_gene = NULL,
-            selected_comparisons = NULL
+            selected_comparisons = NULL,
+            plot_settings = reactiveValuesToList(plot_settings)
           )
         }
       })
@@ -9921,18 +10001,20 @@ server <- function(input, output, session) {
       species_data_list[[species_id]] <- get_species_data(species_id)
     }
     
-    # Create the ridgeline plot
+    #create the ridgeline plot
     output$ridgeline_plot <- renderPlot({
       if (input$ridgeline_view == "distribution") {
         create_ridgeline_plot(
           species_data_list = species_data_list,
-          is_dark_mode = is_dark()
+          is_dark_mode = is_dark(),
+          plot_settings = reactiveValuesToList(plot_settings)
         )
       } else {
         create_threshold_ridgeline(
           species_data_list = species_data_list,
           threshold = input$expression_threshold,
-          is_dark_mode = is_dark()
+          is_dark_mode = is_dark(),
+          plot_settings = reactiveValuesToList(plot_settings)
         )
       }
     })
@@ -10251,13 +10333,15 @@ server <- function(input, output, session) {
       p <- if (input$ridgeline_view == "distribution") {
         create_ridgeline_plot(
           species_data_list = species_data_list,
-          is_dark_mode = is_dark()
+          is_dark_mode = is_dark(),
+          plot_settings = reactiveValuesToList(plot_settings)
         )
       } else {
         create_threshold_ridgeline(
           species_data_list = species_data_list,
           threshold = input$expression_threshold,
-          is_dark_mode = is_dark()
+          is_dark_mode = is_dark(),
+          plot_settings = reactiveValuesToList(plot_settings)
         )
       }
       
