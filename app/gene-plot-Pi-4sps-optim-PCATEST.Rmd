@@ -299,21 +299,9 @@ debug_cat <- function(...) {
   }
 }
 
-#cache environment for expensive operations
+#performance cache for data source changes
 .performance_cache <- new.env(hash = TRUE)
 
-#get/set cached values
-cache_get_or_compute <- function(cache_key, compute_fn, ...) {
-  if (exists(cache_key, envir = .performance_cache)) {
-    return(get(cache_key, envir = .performance_cache))
-  }
-  
-  result <- compute_fn(...)
-  assign(cache_key, result, envir = .performance_cache)
-  return(result)
-}
-
-#clear cache when data changes
 clear_performance_cache <- function() {
   rm(list = ls(envir = .performance_cache), envir = .performance_cache)
 }
@@ -352,12 +340,17 @@ if (!is.null(all_species_data$gene_lookup)) {
   if (!is.data.table(all_species_data$gene_lookup)) {
     all_species_data$gene_lookup <- as.data.table(all_species_data$gene_lookup)
   }
-  #keys for faster searching
-  setkey(all_species_data$gene_lookup, gene_id, gene_name, species)
   
   #precompute uppercase for faster case-insensitive matching
   all_species_data$gene_lookup[, gene_id_upper := toupper(gene_id)]
   all_species_data$gene_lookup[, gene_name_upper := toupper(gene_name)]
+  
+  #create indices on actual query columns
+  setindex(all_species_data$gene_lookup, gene_id_upper)
+  setindex(all_species_data$gene_lookup, gene_name_upper)
+  setindex(all_species_data$gene_lookup, hog_id)
+  setindex(all_species_data$gene_lookup, species)
+  setindex(all_species_data$gene_lookup, gene_id)
 }
 ```
 
@@ -1133,11 +1126,6 @@ query_gene_lookup <- function(query, species_filter = NULL, current_data = NULL)
     current_data <- all_species_data
   }
   lookup_table <- current_data$gene_lookup
-  
-  if (!is.data.table(lookup_table)) {
-    lookup_table <- as.data.table(lookup_table)
-  }
-  
   query <- toupper(trimws(query))
   
   #use precomputed uppercase columns if available
@@ -1153,10 +1141,10 @@ query_gene_lookup <- function(query, species_filter = NULL, current_data = NULL)
   return(matches)
 }
 
-# Function to get expression matrix ID for a gene
-get_expression_id <- function(gene_id, species_code) {
+#get expression matrix ID for a gene
+get_expression_id <- function(query_gene_id, species_code) {
   lookup_table <- all_species_data$gene_lookup
-  match <- lookup_table[gene_id == gene_id & species == species_code]
+  match <- lookup_table[gene_id == query_gene_id & species == species_code]
   
   if (nrow(match) > 0) {
     return(match$expression_id[1])
@@ -1164,25 +1152,20 @@ get_expression_id <- function(gene_id, species_code) {
   return(NULL)
 }
 
-#function to get all genes in an orthogroup
+#get all genes in an orthogroup
 get_orthogroup_genes <- function(group_id, use_og = FALSE, current_data = NULL) {
   if (is.null(current_data)) {
     current_data <- all_species_data  
   }
   lookup_table <- current_data$gene_lookup
   
-  if (!is.data.table(lookup_table)) {
-    lookup_table <- as.data.table(lookup_table)
-  }
-  
-  # Standard HOG-based search
+  #HOG-based search
   result <- lookup_table[hog_id == group_id, ]
   
-  # AUTOMATIC FALLBACK: If we don't get all 4 species, try OG
+  #fallback to OG if not all species found
   if (length(unique(result$species)) < 4 && nrow(result) > 0) {
-    # Get the og_id(s) for this HOG
     og_ids <- unique(result$og_id)
-    og_ids <- og_ids[!is.na(og_ids)]  # Remove NAs
+    og_ids <- og_ids[!is.na(og_ids)]
     
     if (length(og_ids) > 0) {
       og_result <- lookup_table[og_id %in% og_ids, ]
@@ -1195,13 +1178,13 @@ get_orthogroup_genes <- function(group_id, use_og = FALSE, current_data = NULL) 
   return(result)
 }
 
-#function to identify species from gene ID using lookup table
-identify_species <- function(gene_id, current_data = NULL) {
+#identify species from gene ID using lookup table
+identify_species <- function(query_gene_id, current_data = NULL) {
   if (is.null(current_data)) {
     current_data <- all_species_data
   }
   lookup_table <- current_data$gene_lookup
-  match <- lookup_table[gene_id == gene_id]
+  match <- lookup_table[gene_id == query_gene_id]
   
   if (nrow(match) > 0) {
     return(as.character(match$species[1]))
@@ -4320,58 +4303,43 @@ create_phylo_tree_plot <- function(tree, orthogroup_genes, orthogroup_id, is_dar
   })
   gene_mapping <- rbindlist(Filter(Negate(is.null), mapping_list), fill = TRUE)
   
-  # Create metadata dataframe for tips only
+  #create metadata dataframe for tips
   tip_metadata <- data.frame(
     label = tree$tip.label,
     stringsAsFactors = FALSE
   )
   
-  # Add display_label and species columns
   tip_metadata$display_label <- NA_character_
   tip_metadata$species <- NA_character_
   
+  #extract lookup table once outside loop
+  if (is.null(current_data)) {
+    current_data <- all_species_data  
+  }
+  lookup_table <- current_data$gene_lookup
+  config <- if(!is.null(species_config)) species_config else DEFAULT_SPECIES_CONFIG
+  
   for (i in 1:nrow(tip_metadata)) {
-    current_gene_id <- tip_metadata$label[i]  # Renamed to avoid confusion
-    
-    # Use provided current_data or fall back to global
-    if (is.null(current_data)) {
-      current_data <- all_species_data  
-    }
-    
-    # Extract lookup table from current_data
-    lookup_table <- current_data$gene_lookup
-    
-    # Ensure it's a data.table for consistent subsetting
-    if (!is.data.table(lookup_table)) {
-      lookup_table <- as.data.table(lookup_table)
-    }
+    current_gene_id <- tip_metadata$label[i]
     
     lookup_match <- lookup_table[gene_id == current_gene_id, ]
     
     if (nrow(lookup_match) > 0) {
-      # Found in lookup table
       sp_code <- as.character(lookup_match$species[1])
       
-      # Use passed config or fall back to DEFAULT_SPECIES_CONFIG
-      config <- if(!is.null(species_config)) species_config else DEFAULT_SPECIES_CONFIG
-      
       if (sp_code %in% names(config)) {
-        # Use SHORT name for consistency with dynamic species colors
         tip_metadata$species[i] <- config[[sp_code]]$short
         
-        # Build display label
         if (!is.na(lookup_match$gene_name[1]) && lookup_match$gene_name[1] != "") {
           tip_metadata$display_label[i] <- paste0(lookup_match$gene_name[1], " (", current_gene_id, ")")
         } else {
           tip_metadata$display_label[i] <- current_gene_id
         }
       } else {
-        # Species code not recognized
         tip_metadata$species[i] <- "Unknown"
         tip_metadata$display_label[i] <- current_gene_id
       }
     } else {
-      # Not in gene_lookup - mark as unknown
       tip_metadata$species[i] <- "Unknown"
       tip_metadata$display_label[i] <- current_gene_id
     }
@@ -4696,7 +4664,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateTextAreaInput(session, "gene_list", value = state$gene_list)
       }, error = function(e) {
-        message("could not restore gene_list: ", e$message)
+        debug_print("could not restore gene_list: ", e$message)
       })
     }
     
@@ -4704,7 +4672,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateCheckboxInput(session, "enable_ortholog_analysis", value = state$enable_ortholog_analysis)
       }, error = function(e) {
-        message("could not restore enable_ortholog_analysis: ", e$message)
+        debug_print("could not restore enable_ortholog_analysis: ", e$message)
       })
     }
     
@@ -4712,7 +4680,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateSelectInput(session, "group_analysis_species", selected = state$group_analysis_species)
       }, error = function(e) {
-        message("could not restore group_analysis_species: ", e$message)
+        debug_print("could not restore group_analysis_species: ", e$message)
       })
     }
     
@@ -4720,7 +4688,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateSelectInput(session, "group_viz_type", selected = state$group_viz_type)
       }, error = function(e) {
-        message("could not restore group_viz_type: ", e$message)
+        debug_print("could not restore group_viz_type: ", e$message)
       })
     }
     
@@ -4728,7 +4696,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateSelectInput(session, "distance_method", selected = state$distance_method)
       }, error = function(e) {
-        message("could not restore distance_method: ", e$message)
+        debug_print("could not restore distance_method: ", e$message)
       })
     }
     
@@ -4736,7 +4704,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateSelectInput(session, "data_transform", selected = state$data_transform)
       }, error = function(e) {
-        message("could not restore data_transform: ", e$message)
+        debug_print("could not restore data_transform: ", e$message)
       })
     }
     
@@ -4744,7 +4712,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateRadioButtons(session, "aggregation_level", selected = state$aggregation_level)
       }, error = function(e) {
-        message("could not restore aggregation_level: ", e$message)
+        debug_print("could not restore aggregation_level: ", e$message)
       })
     }
     
@@ -4754,7 +4722,7 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         ortholog_state$selected_orthologs <- state$ortholog_selected
       }, error = function(e) {
-        message("could not restore ortholog_selected: ", e$message)
+        debug_print("could not restore ortholog_selected: ", e$message)
       })
     }
     
@@ -4763,11 +4731,11 @@ restore_session_state <- function(state, selected_genes, query_results, global_q
       tryCatch({
         updateNavbarPage(session, "nav", selected = state$current_tab)
       }, error = function(e) {
-        message("could not restore current_tab: ", e$message)
+        debug_print("could not restore current_tab: ", e$message)
       })
     }
   }, error = function(e) {
-    message("error in restore_session_state: ", e$message)
+    debug_print("error in restore_session_state: ", e$message)
   })
 }
 
@@ -6716,20 +6684,20 @@ server <- function(input, output, session) {
   observeEvent(input$restore_session, {
     req(input$restore_session)
     
-    message("restore session triggered")
+    debug_print("restore session triggered")
     
     state <- input$restore_session$state
     saved_at <- input$restore_session$saved_at
     time_ago <- format_time_ago(saved_at)
     
-    message(paste("restoring state from", time_ago))
-    message(paste("state contents:", paste(names(state), collapse = ", ")))
+    debug_print(paste("restoring state from", time_ago))
+    debug_print(paste("state contents:", paste(names(state), collapse = ", ")))
     
     #delay restoration to ensure UI elements are rendered
     shinyjs::delay(500, {
       restore_session_state(state, selected_genes, query_results, global_query_state, combined_selections, ortholog_state, session)
       
-      message("state restored, showing notification")
+      debug_print("state restored, showing notification")
       
       showNotification(
         ui = tagList(
@@ -6757,56 +6725,53 @@ server <- function(input, output, session) {
     invalidateLater(2000)
     isolate({
       session_initialized(TRUE)
-      message("session initialized, auto-save enabled")
+      debug_print("session initialized, auto-save enabled")
     })
   }) %>% bindEvent(TRUE, once = TRUE)
   
-  #auto-save session after changes using observeEvent pattern
+  #auto-save session after changes
   observe({
-    #only run after initialization
     req(session_initialized())
     
-    #dependencies that trigger save
-    list(
-      reactiveValuesToList(selected_genes),
-      reactiveValuesToList(query_results),
-      reactiveValuesToList(combined_selections),
-      global_query_state$current_query,
-      input$gene_list,
-      input$enable_ortholog_analysis,
-      input$nav,
-      input$group_analysis_species,
-      input$group_viz_type,
-      input$distance_method,
-      input$data_transform,
-      input$aggregation_level
+    #reactive dependencies that trigger save
+    deps <- list(
+      selected = reactiveValuesToList(selected_genes),
+      queries = reactiveValuesToList(query_results),
+      combined = reactiveValuesToList(combined_selections),
+      current_query = global_query_state$current_query,
+      gene_list = input$gene_list,
+      ortholog_enabled = input$enable_ortholog_analysis,
+      nav = input$nav,
+      species = input$group_analysis_species,
+      viz = input$group_viz_type,
+      distance = input$distance_method,
+      transform = input$data_transform,
+      aggregation = input$aggregation_level
     )
     
-    #isolate the actual save operation
     isolate({
-      #skip if critical values are null (not yet loaded)
-      if (is.null(input$nav)) return()
+      if (is.null(deps$nav)) return()
       
       current_state <- list(
         version = "1.0",
         timestamp = format(Sys.time(), "%Y-%m-%dT%H:%M:%OSZ", tz = "UTC"),
-        selected_genes = reactiveValuesToList(selected_genes),
-        query_results = reactiveValuesToList(query_results),
-        current_query = global_query_state$current_query,
-        combined_selections = reactiveValuesToList(combined_selections),
-        gene_list = input$gene_list,
-        enable_ortholog_analysis = input$enable_ortholog_analysis,
-        current_tab = input$nav,
-        group_analysis_species = input$group_analysis_species,
-        group_viz_type = input$group_viz_type,
-        distance_method = input$distance_method,
-        data_transform = input$data_transform,
-        aggregation_level = input$aggregation_level,
+        selected_genes = deps$selected,
+        query_results = deps$queries,
+        current_query = deps$current_query,
+        combined_selections = deps$combined,
+        gene_list = deps$gene_list,
+        enable_ortholog_analysis = deps$ortholog_enabled,
+        current_tab = deps$nav,
+        group_analysis_species = deps$species,
+        group_viz_type = deps$viz,
+        distance_method = deps$distance,
+        data_transform = deps$transform,
+        aggregation_level = deps$aggregation,
         ortholog_selected = if (exists("ortholog_state")) ortholog_state$selected_orthologs else NULL
       )
       
       session$sendCustomMessage(type = "saveSession", message = current_state)
-      message("session state saved")
+      debug_print("session state saved")
     })
   }) %>% debounce(2000)
   
@@ -7220,31 +7185,30 @@ server <- function(input, output, session) {
     ))
   })
   
-  # Get species data with caching
+  #species data cache with composite key
   species_data_cache <- new.env()
-  #make get_species_data handle dynamic species
+  
   get_species_data <- function(species_id) {
-    #get current configuration
     config <- current_species_config()
+    current_source <- data_source()
     
-    #check data source
-    current_data <- if (data_source() == "custom" && !is.null(upload_state$custom_all_species_data)) {
+    current_data <- if (current_source == "custom" && !is.null(upload_state$custom_all_species_data)) {
       upload_state$custom_all_species_data
     } else {
       all_species_data
     }
     
-    if (!exists(species_id, envir = species_data_cache)) {
-      #check if this is a known species in the current data
+    #composite cache key includes data source to prevent stale data
+    cache_key <- paste(species_id, current_source, sep = "_")
+    
+    if (!exists(cache_key, envir = species_data_cache)) {
       if (species_id %in% names(current_data)) {
         sp_config <- config[[species_id]]
         
         #strategy 1: direct naming (standard for uploaded data and cg)
         if (!is.null(current_data[[species_id]]$lcpm) || !is.null(current_data[[species_id]]$rlog)) {
-          #copy all data directly from current_data
           data <- current_data[[species_id]]
           
-          #ensure species_name is set
           if (is.null(data$species_name)) {
             data$species_name <- if(!is.null(sp_config$short)) sp_config$short else species_id
           }
@@ -7259,28 +7223,23 @@ server <- function(input, output, session) {
         } 
         #strategy 2: prefixed naming (for original sc, kl, ca data)
         else {
-          #initialize empty data structure
           data <- list(
             species_name = if(!is.null(sp_config$short)) sp_config$short else species_id
           )
           
-          #dynamically find all prefixed data for this species
           prefixed_keys <- names(current_data[[species_id]])
           prefix_pattern <- paste0("^", species_id, "_")
           
           for (key in prefixed_keys) {
             if (grepl(prefix_pattern, key)) {
-              #extract the base name (e.g., "sc_lcpm" -> "lcpm")
               base_name <- sub(prefix_pattern, "", key)
-              
-              #store with both prefixed and base names
               data[[key]] <- current_data[[species_id]][[key]]
               data[[base_name]] <- current_data[[species_id]][[key]]
             }
           }
         }
         
-        #verify we found at least one expression matrix
+        #verify expression matrix exists
         has_expr_data <- any(sapply(names(data), function(nm) {
           obj <- data[[nm]]
           is.matrix(obj) || (is.data.frame(obj) && ncol(obj) > 5)
@@ -7291,12 +7250,12 @@ server <- function(input, output, session) {
           return(NULL)
         }
         
-        assign(species_id, data, envir = species_data_cache)
+        assign(cache_key, data, envir = species_data_cache)
       } else {
         return(NULL)
       }
     }
-    get(species_id, envir = species_data_cache)
+    get(cache_key, envir = species_data_cache)
   }
   
   # FIXED Combined view search handler
@@ -7544,20 +7503,47 @@ server <- function(input, output, session) {
     waiter_hide()
   })
   
+  #track created observers for cleanup
+  if (is.null(session$userData$created_species_observers)) {
+    session$userData$created_species_observers <- character(0)
+  }
+  
   #observers dynamically based on current configuration
   observe({
     config <- current_species_config()
+    current_species <- names(config)
     
-    # Create observers for each species
-    lapply(names(config), function(species_id) {
-      # Create unique observer ID to avoid duplicates
+    #cleanup observers for removed species
+    existing_observers <- session$userData$created_species_observers
+    removed_species <- setdiff(existing_observers, current_species)
+    
+    for (sp_id in removed_species) {
+      #destroy observers for removed species
+      obs_names <- c(
+        paste0("obs_search_", sp_id),
+        paste0("obs_plot_", sp_id),
+        paste0("obs_download_", sp_id)
+      )
+      for (obs_name in obs_names) {
+        if (exists(obs_name, envir = session$userData)) {
+          obs <- session$userData[[obs_name]]
+          if (inherits(obs, "Observer")) {
+            obs$destroy()
+          }
+          rm(list = obs_name, envir = session$userData)
+        }
+      }
+    }
+    session$userData$created_species_observers <- current_species
+    
+    #create observers for each species
+    lapply(current_species, function(species_id) {
       obs_search_id <- paste0("obs_search_", species_id)
       obs_plot_id <- paste0("obs_plot_", species_id)
       obs_download_id <- paste0("obs_download_", species_id)
       
-      # Only create if not already exists
       if (!exists(obs_search_id, envir = session$userData)) {
-        # Search button handler
+        #search button handler
         session$userData[[obs_search_id]] <- observeEvent(input[[paste0(species_id, "_search_button")]], {
           waiter_show(html = loading_screen)
           
