@@ -330,6 +330,7 @@ suppressMessages({
   library(treeio)
   library(RColorBrewer)
   library(here)
+  library(colourpicker)
 })
 
 # Load the new RData file with HOG-based orthogroups
@@ -383,6 +384,198 @@ SPECIES_COLORS <- DEFAULT_SPECIES_COLORS
 DYNAMIC_COLOR_PALETTE <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", 
                           "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
                           "#BB8FCE", "#85C1E2", "#F8B739", "#52BE80")
+
+#qualitative palettes for categorical data
+PALETTES_QUALITATIVE <- c("Dark2", "Set1", "Set2", "Paired", "Accent", "Pastel1")
+
+#sequential palettes for continuous data
+PALETTES_SEQUENTIAL <- c("viridis", "plasma", "inferno", "magma", "cividis", "Blues", "Greens", "YlOrRd")
+
+#diverging palettes for centered data
+PALETTES_DIVERGING <- c("RdBu", "RdYlBu", "PiYG", "PRGn", "BrBG", "Spectral")
+
+#default shape cycle (pch values)
+SHAPES_DEFAULT <- c(16L, 17L, 15L, 18L, 8L, 3L)
+
+#default linetype cycle
+LINETYPES_DEFAULT <- c("solid", "dashed", "dotted", "longdash", "twodash", "dotdash")
+
+#colorblind-safe palette (okabe-ito)
+PALETTE_OKABE_ITO <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#999999")
+
+#get n colors from named palette
+get_palette_colors <- function(palette_name, n) {
+  if (palette_name == "Okabe-Ito") {
+    return(PALETTE_OKABE_ITO[1:min(n, length(PALETTE_OKABE_ITO))])
+  }
+  if (palette_name %in% c("viridis", "plasma", "inferno", "magma", "cividis")) {
+    return(viridis::viridis(n, option = palette_name))
+  }
+  if (palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+    max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+    return(RColorBrewer::brewer.pal(min(n, max_colors), palette_name))
+  }
+  return(DYNAMIC_COLOR_PALETTE[1:min(n, length(DYNAMIC_COLOR_PALETTE))])
+}
+
+#derive species colors from palette and config
+derive_species_colors <- function(species_list, palette_name, custom_overrides = NULL) {
+  n <- length(species_list)
+  base_colors <- get_palette_colors(palette_name, n)
+  colors <- setNames(base_colors, species_list)
+  if (!is.null(custom_overrides)) {
+    for (sp in names(custom_overrides)) {
+      if (sp %in% names(colors)) {
+        colors[[sp]] <- custom_overrides[[sp]]
+      }
+    }
+  }
+  as.list(colors)
+}
+
+#derive species shapes from defaults and overrides
+derive_species_shapes <- function(species_list, custom_overrides = NULL) {
+  n <- length(species_list)
+  base_shapes <- SHAPES_DEFAULT[((seq_len(n) - 1) %% length(SHAPES_DEFAULT)) + 1]
+  shapes <- setNames(as.integer(base_shapes), species_list)
+  if (!is.null(custom_overrides)) {
+    for (sp in names(custom_overrides)) {
+      if (sp %in% names(shapes)) {
+        shapes[[sp]] <- as.integer(custom_overrides[[sp]])
+      }
+    }
+  }
+  as.list(shapes)
+}
+
+#get aesthetic mappings for multi-gene plots
+get_multigene_aesthetics <- function(settings, species_list, gene_list) {
+  n_species <- length(species_list)
+  n_genes <- length(gene_list)
+  
+  shape_values <- NULL
+  shape_var <- NULL
+  linetype_values <- NULL
+  linetype_var <- NULL
+  
+  if (settings$encoding_multigene_color == "species") {
+    color_values <- unlist(settings$species_colors[species_list])
+    color_var <- "species"
+    if (settings$encoding_multigene_secondary == "linetype" && n_genes <= 6) {
+      linetype_values <- setNames(LINETYPES_DEFAULT[1:n_genes], gene_list)
+      linetype_var <- "gene"
+    } else if (settings$encoding_multigene_secondary == "shape" && n_genes <= 6) {
+      shape_values <- setNames(SHAPES_DEFAULT[1:n_genes], gene_list)
+      shape_var <- "gene"
+    }
+  } else {
+    color_values <- get_palette_colors(settings$gene_palette, n_genes)
+    names(color_values) <- gene_list
+    color_var <- "gene"
+    if (settings$encoding_multigene_secondary == "linetype") {
+      linetype_values <- setNames(LINETYPES_DEFAULT[1:min(n_species, 6)], species_list[1:min(n_species, 6)])
+      linetype_var <- "species"
+    }
+  }
+  
+  list(
+    color_values = color_values,
+    color_var = color_var,
+    linetype_values = linetype_values,
+    linetype_var = linetype_var,
+    shape_values = shape_values,
+    shape_var = shape_var
+  )
+}
+
+#merge global settings with local overrides
+merge_plot_settings <- function(global, local) {
+  if (is.null(local) || isTRUE(local$use_global)) {
+    return(global)
+  }
+  merged <- global
+  for (key in names(local)) {
+    if (!is.null(local[[key]]) && key != "use_global") {
+      merged[[key]] <- local[[key]]
+    }
+  }
+  merged
+}
+
+#generate default settings for a species configuration
+generate_default_settings <- function(species_config) {
+  species_list <- sapply(species_config, function(x) x$short)
+  list(
+    species_palette = "Dark2",
+    species_colors = derive_species_colors(species_list, "Dark2"),
+    species_shapes = derive_species_shapes(species_list),
+    species_colors_custom = list(),
+    species_shapes_custom = list(),
+    encoding_multigene_color = "species",
+    encoding_multigene_secondary = "linetype",
+    gene_palette = "Set2",
+    heatmap_palette = "viridis",
+    heatmap_scale_type = "sequential",
+    heatmap_midpoint = "auto",
+    heatmap_show_row_dendro = TRUE,
+    heatmap_show_col_dendro = TRUE,
+    heatmap_row_annotation = TRUE,
+    ridgeline_palette = "viridis",
+    ridgeline_alpha = 0.8,
+    encoding_pca_color = "species",
+    encoding_pca_shape = "species",
+    pca_alpha = 0.8,
+    pca_point_size = 3,
+    pca_show_ellipses = TRUE,
+    pca_show_loadings = FALSE,
+    export_width = 8,
+    export_height = 6,
+    export_dpi = 300,
+    export_format = "png"
+  )
+}
+
+#bundled presets
+get_bundled_presets <- function() {
+  list(
+    default = list(
+      name = "Default",
+      species_palette = "Dark2",
+      encoding_multigene_color = "species",
+      gene_palette = "Set2",
+      heatmap_palette = "viridis",
+      ridgeline_palette = "viridis"
+    ),
+    publication = list(
+      name = "Publication",
+      species_palette = "Set1",
+      encoding_multigene_color = "species",
+      gene_palette = "Set1",
+      heatmap_palette = "RdBu",
+      heatmap_scale_type = "diverging",
+      ridgeline_palette = "plasma",
+      export_dpi = 300,
+      export_format = "pdf"
+    ),
+    colorblind = list(
+      name = "Colorblind Safe",
+      species_palette = "Okabe-Ito",
+      encoding_multigene_color = "species",
+      gene_palette = "Okabe-Ito",
+      heatmap_palette = "cividis",
+      ridgeline_palette = "cividis"
+    ),
+    gene_focused = list(
+      name = "Gene Focused",
+      species_palette = "Dark2",
+      encoding_multigene_color = "gene",
+      encoding_multigene_secondary = "linetype",
+      gene_palette = "Set1",
+      heatmap_palette = "viridis",
+      ridgeline_palette = "viridis"
+    )
+  )
+}
 
 # theme configs
 light_theme <- bs_theme(
@@ -1336,13 +1529,14 @@ hiddenInput <- function(inputId, value) {
 }
 
 #Modified plot function to handle selected genes
-create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode = FALSE, species_colors = NULL, transform_type = "lcpm") {
+create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode = FALSE, 
+                            species_colors = NULL, transform_type = "lcpm", plot_settings = NULL) {
   tryCatch({
-    # Try to find the gene with different formats (for K. lactis)
+    #try to find the gene with different formats (for K. lactis)
     gene_found <- FALSE
     gene_to_use <- gene
     
-    # For K. lactis, try multiple formats
+    #for K. lactis, try multiple formats
     if (grepl("^KLLA0", gene)) {
       possible_genes <- c(gene, gsub("_", "", gene), gsub("^(KLLA0)(.*)", "\\1_\\2", gene))
       for (pg in possible_genes) {
@@ -1358,7 +1552,6 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
     }
     
     if(!gene_found) {
-      # More informative error message
       available_example <- head(rownames(lc)[grepl(substr(gene, 1, 5), rownames(lc))], 3)
       error_msg <- paste("Gene ID", gene, "not found in expression data.")
       if (length(available_example) > 0) {
@@ -1370,11 +1563,13 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
                            showarrow = FALSE))
     }
     
-    # Get the appropriate color for this species
-    species_color <- if(!is.null(species_colors) && species_name %in% names(species_colors)) {
+    #get species color from settings or fallback
+    species_color <- if (!is.null(plot_settings) && species_name %in% names(plot_settings$species_colors)) {
+      plot_settings$species_colors[[species_name]]
+    } else if (!is.null(species_colors) && species_name %in% names(species_colors)) {
       species_colors[[species_name]]
     } else {
-      "#440154"  # Default color
+      "#440154"
     }
     
     # Normalize timepoint format (handle both "0min" and "0" formats)
@@ -2843,7 +3038,9 @@ preaggregate_species_hogs <- function(lcpm_matrix, species_hog_map, common_hogs,
   return(hog_expr)
 }
 
-create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, aggregation_method = "eigengene", species_config = DEFAULT_SPECIES_CONFIG, all_species_data_obj = NULL, transform_type = "lcpm", debug = FALSE) {
+create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, aggregation_method = "eigengene", 
+                                    species_config = DEFAULT_SPECIES_CONFIG, all_species_data_obj = NULL, 
+                                    transform_type = "lcpm", debug = FALSE, plot_settings = NULL) {
   
   method_label <- switch(aggregation_method,
                          "single_only" = "SINGLE-COPY GENES ONLY",
@@ -5031,6 +5228,10 @@ ui <- page_navbar(
           ),
           actionButton("show_help", "Tutorial", icon = icon("question-circle"), 
                        class = "btn-link text-white me-2"),
+          actionButton("show_settings", label = NULL,
+                       icon = icon("gear"),
+                       class = "btn-link text-white me-2",
+                       title = "Plot settings"),
           actionButton("theme_toggle", label = NULL,
                        icon = icon("moon", verify_fa = FALSE),
                        class = "btn-link text-white",
@@ -6551,32 +6752,109 @@ server <- function(input, output, session) {
       DEFAULT_SPECIES_CONFIG
     }
   })
-  #dynamic color assignment to sps (will add more colors if needed) 
+  
+  #initialize plot settings
+  plot_settings <- reactiveValues(
+    #species identity
+    species_palette = "Dark2",
+    species_colors = list(),
+    species_shapes = list(),
+    species_colors_custom = list(),
+    species_shapes_custom = list(),
+    
+    #multi-gene line/point encoding
+    encoding_multigene_color = "species",
+    encoding_multigene_secondary = "linetype",
+    gene_palette = "Set2",
+    
+    #heatmap settings
+    heatmap_palette = "viridis",
+    heatmap_scale_type = "sequential",
+    heatmap_midpoint = "auto",
+    heatmap_show_row_dendro = TRUE,
+    heatmap_show_col_dendro = TRUE,
+    heatmap_row_annotation = TRUE,
+    
+    #ridgeline settings
+    ridgeline_palette = "viridis",
+    ridgeline_alpha = 0.8,
+    
+    #pca settings
+    encoding_pca_color = "species",
+    encoding_pca_shape = "species",
+    pca_alpha = 0.8,
+    pca_point_size = 3,
+    pca_show_ellipses = TRUE,
+    pca_show_loadings = FALSE,
+    
+    #export settings
+    export_width = 8,
+    export_height = 6,
+    export_dpi = 300,
+    export_format = "png",
+    
+    #saved presets
+    presets = list(),
+    
+    #initialization flag
+    initialized = FALSE
+  )
+  
+  #initialize settings from species config
+  observe({
+    req(!plot_settings$initialized)
+    config <- current_species_config()
+    defaults <- generate_default_settings(config)
+    for (key in names(defaults)) {
+      plot_settings[[key]] <- defaults[[key]]
+    }
+    plot_settings$presets <- get_bundled_presets()
+    plot_settings$initialized <- TRUE
+  })
+  
+  #update species colors when palette changes
+  observeEvent(plot_settings$species_palette, {
+    req(plot_settings$initialized)
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    plot_settings$species_colors <- derive_species_colors(
+      species_list,
+      plot_settings$species_palette,
+      plot_settings$species_colors_custom
+    )
+  })
+  
+  #update species colors when custom overrides change
+  observeEvent(plot_settings$species_colors_custom, {
+    req(plot_settings$initialized)
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    plot_settings$species_colors <- derive_species_colors(
+      species_list,
+      plot_settings$species_palette,
+      plot_settings$species_colors_custom
+    )
+  }, ignoreInit = TRUE)
+  
+  #dynamic color assignment reads from plot_settings
   species_colors_dynamic <- reactive({
+    if (plot_settings$initialized) {
+      return(plot_settings$species_colors)
+    }
+    #fallback to old logic if settings not initialized
     config <- current_species_config()
     colors <- list()
-    
-    # Use a diverse color palette for automatic assignment
-    auto_colors <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", 
-                     "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
-                     "#BB8FCE", "#85C1E2", "#F8B739", "#52BE80",
-                     "#E74C3C", "#3498DB", "#9B59B6", "#1ABC9C")
-    
+    auto_colors <- DYNAMIC_COLOR_PALETTE
     color_index <- 1
-    
     for (sp_code in names(config)) {
       sp_short <- config[[sp_code]]$short
-      
-      # Check if this species has a predefined color
       if (sp_short %in% names(DEFAULT_SPECIES_COLORS)) {
         colors[[sp_short]] <- DEFAULT_SPECIES_COLORS[[sp_short]]
       } else {
-        # Assign from auto_colors palette
         colors[[sp_short]] <- auto_colors[color_index]
         color_index <- ((color_index - 1) %% length(auto_colors)) + 1
       }
     }
-    
     colors
   })
   
@@ -7089,7 +7367,8 @@ server <- function(input, output, session) {
           aggregation_method = aggregation_method,
           species_config = current_species_config(),
           all_species_data_obj = get_all_species_data(),
-          transform_type = input$global_transform
+          transform_type = input$global_transform,
+          plot_settings = reactiveValuesToList(plot_settings)
         )
         
         # Check if plot was created successfully
@@ -7224,6 +7503,355 @@ server <- function(input, output, session) {
       footer = modalButton("Close"),
       size = "l"
     ))
+  })
+  
+  #settings modal
+  observeEvent(input$show_settings, {
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    
+    showModal(modalDialog(
+      title = div(icon("gear"), " Plot Settings"),
+      size = "l",
+      easyClose = TRUE,
+      footer = tagList(
+        actionButton("settings_reset", "Reset to Defaults", class = "btn-secondary"),
+        modalButton("Close")
+      ),
+      
+      tabsetPanel(
+        id = "settings_tabs",
+        type = "tabs",
+        
+        #tab 1: species identity
+        tabPanel(
+          "Species",
+          icon = icon("palette"),
+          div(
+            style = "padding: 15px;",
+            h5("Species Color Palette"),
+            selectInput("settings_species_palette", NULL,
+                        choices = c("Dark2", "Set1", "Set2", "Paired", "Accent", "Okabe-Ito"),
+                        selected = isolate(plot_settings$species_palette)),
+            hr(),
+            h5("Per-Species Colors"),
+            p(class = "text-muted", "Click to customize individual species colors"),
+            uiOutput("species_color_pickers"),
+            hr(),
+            h5("Per-Species Shapes"),
+            uiOutput("species_shape_pickers")
+          )
+        ),
+        
+        #tab 2: multi-gene plots
+        tabPanel(
+          "Multi-Gene",
+          icon = icon("chart-line"),
+          div(
+            style = "padding: 15px;",
+            h5("Line/Point Plot Encoding"),
+            radioButtons("settings_multigene_color", "Color represents:",
+                         choices = c("Species" = "species", "Gene" = "gene"),
+                         selected = isolate(plot_settings$encoding_multigene_color),
+                         inline = TRUE),
+            radioButtons("settings_multigene_secondary", "Secondary encoding:",
+                         choices = c("Linetype" = "linetype", "Shape" = "shape", "None" = "none"),
+                         selected = isolate(plot_settings$encoding_multigene_secondary),
+                         inline = TRUE),
+            conditionalPanel(
+              condition = "input.settings_multigene_color == 'gene'",
+              selectInput("settings_gene_palette", "Gene color palette:",
+                          choices = c("Set1", "Set2", "Dark2", "Paired", "Accent", "Okabe-Ito"),
+                          selected = isolate(plot_settings$gene_palette))
+            ),
+            hr(),
+            h5("Heatmap Settings"),
+            selectInput("settings_heatmap_palette", "Heatmap palette:",
+                        choices = c("viridis", "plasma", "inferno", "magma", "cividis",
+                                    "RdBu", "RdYlBu", "PiYG", "PRGn", "BrBG"),
+                        selected = isolate(plot_settings$heatmap_palette)),
+            radioButtons("settings_heatmap_scale", "Scale type:",
+                         choices = c("Sequential" = "sequential", "Diverging" = "diverging"),
+                         selected = isolate(plot_settings$heatmap_scale_type),
+                         inline = TRUE),
+            conditionalPanel(
+              condition = "input.settings_heatmap_scale == 'diverging'",
+              radioButtons("settings_heatmap_midpoint", "Center at:",
+                           choices = c("Auto" = "auto", "Zero" = "zero", "Median" = "median"),
+                           selected = isolate(plot_settings$heatmap_midpoint),
+                           inline = TRUE)
+            ),
+            checkboxInput("settings_heatmap_row_dendro", "Show row dendrogram",
+                          value = isolate(plot_settings$heatmap_show_row_dendro)),
+            checkboxInput("settings_heatmap_col_dendro", "Show column dendrogram",
+                          value = isolate(plot_settings$heatmap_show_col_dendro)),
+            hr(),
+            h5("Ridgeline Settings"),
+            selectInput("settings_ridgeline_palette", "Ridgeline palette:",
+                        choices = c("viridis", "plasma", "inferno", "magma", "cividis"),
+                        selected = isolate(plot_settings$ridgeline_palette)),
+            sliderInput("settings_ridgeline_alpha", "Opacity:",
+                        min = 0.3, max = 1, value = isolate(plot_settings$ridgeline_alpha),
+                        step = 0.1)
+          )
+        ),
+        
+        #tab 3: pca settings
+        tabPanel(
+          "PCA",
+          icon = icon("project-diagram"),
+          div(
+            style = "padding: 15px;",
+            h5("PCA Encoding"),
+            selectInput("settings_pca_color", "Color represents:",
+                        choices = c("Species" = "species", "Condition" = "condition",
+                                    "Timepoint" = "timepoint"),
+                        selected = isolate(plot_settings$encoding_pca_color)),
+            selectInput("settings_pca_shape", "Shape represents:",
+                        choices = c("Species" = "species", "Condition" = "condition",
+                                    "None" = "none"),
+                        selected = isolate(plot_settings$encoding_pca_shape)),
+            hr(),
+            h5("Appearance"),
+            sliderInput("settings_pca_alpha", "Point opacity:",
+                        min = 0.3, max = 1, value = isolate(plot_settings$pca_alpha),
+                        step = 0.1),
+            sliderInput("settings_pca_size", "Point size:",
+                        min = 1, max = 6, value = isolate(plot_settings$pca_point_size),
+                        step = 0.5),
+            checkboxInput("settings_pca_ellipses", "Show confidence ellipses",
+                          value = isolate(plot_settings$pca_show_ellipses)),
+            checkboxInput("settings_pca_loadings", "Show gene loadings",
+                          value = isolate(plot_settings$pca_show_loadings))
+          )
+        ),
+        
+        #tab 4: presets
+        tabPanel(
+          "Presets",
+          icon = icon("save"),
+          div(
+            style = "padding: 15px;",
+            h5("Load Preset"),
+            selectInput("settings_load_preset", NULL,
+                        choices = c("Select..." = "", names(isolate(plot_settings$presets)))),
+            actionButton("settings_apply_preset", "Apply Preset", class = "btn-primary"),
+            hr(),
+            h5("Save Current Settings"),
+            textInput("settings_preset_name", "Preset name:"),
+            actionButton("settings_save_preset", "Save as Preset", class = "btn-success"),
+            hr(),
+            h5("Export Settings"),
+            selectInput("settings_export_format", "Default export format:",
+                        choices = c("PNG" = "png", "SVG" = "svg", "PDF" = "pdf"),
+                        selected = isolate(plot_settings$export_format)),
+            numericInput("settings_export_dpi", "DPI:", value = isolate(plot_settings$export_dpi),
+                         min = 72, max = 600, step = 50)
+          )
+        )
+      )
+    ))
+  })
+  
+  #render species color pickers
+  output$species_color_pickers <- renderUI({
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    current_colors <- plot_settings$species_colors
+    
+    picker_list <- lapply(species_list, function(sp) {
+      col <- if (sp %in% names(current_colors)) current_colors[[sp]] else "#808080"
+      div(
+        style = "display: inline-block; margin: 5px;",
+        colourpicker::colourInput(
+          paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp)),
+          label = sp,
+          value = col,
+          showColour = "background"
+        )
+      )
+    })
+    
+    do.call(tagList, picker_list)
+  })
+  
+  #render species shape pickers
+  output$species_shape_pickers <- renderUI({
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    current_shapes <- plot_settings$species_shapes
+    
+    shape_choices <- c("Circle" = 16, "Triangle" = 17, "Square" = 15,
+                       "Diamond" = 18, "Star" = 8, "Plus" = 3, "Cross" = 4)
+    
+    picker_list <- lapply(species_list, function(sp) {
+      shp <- if (sp %in% names(current_shapes)) current_shapes[[sp]] else 16
+      div(
+        style = "display: inline-block; margin: 5px; min-width: 120px;",
+        selectInput(
+          paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp)),
+          label = sp,
+          choices = shape_choices,
+          selected = shp
+        )
+      )
+    })
+    
+    do.call(tagList, picker_list)
+  })
+  
+  #update settings from modal inputs
+  observeEvent(input$settings_species_palette, {
+    plot_settings$species_palette <- input$settings_species_palette
+  })
+  
+  observeEvent(input$settings_multigene_color, {
+    plot_settings$encoding_multigene_color <- input$settings_multigene_color
+  })
+  
+  observeEvent(input$settings_multigene_secondary, {
+    plot_settings$encoding_multigene_secondary <- input$settings_multigene_secondary
+  })
+  
+  observeEvent(input$settings_gene_palette, {
+    plot_settings$gene_palette <- input$settings_gene_palette
+  })
+  
+  observeEvent(input$settings_heatmap_palette, {
+    plot_settings$heatmap_palette <- input$settings_heatmap_palette
+  })
+  
+  observeEvent(input$settings_heatmap_scale, {
+    plot_settings$heatmap_scale_type <- input$settings_heatmap_scale
+  })
+  
+  observeEvent(input$settings_heatmap_midpoint, {
+    plot_settings$heatmap_midpoint <- input$settings_heatmap_midpoint
+  })
+  
+  observeEvent(input$settings_heatmap_row_dendro, {
+    plot_settings$heatmap_show_row_dendro <- input$settings_heatmap_row_dendro
+  })
+  
+  observeEvent(input$settings_heatmap_col_dendro, {
+    plot_settings$heatmap_show_col_dendro <- input$settings_heatmap_col_dendro
+  })
+  
+  observeEvent(input$settings_ridgeline_palette, {
+    plot_settings$ridgeline_palette <- input$settings_ridgeline_palette
+  })
+  
+  observeEvent(input$settings_ridgeline_alpha, {
+    plot_settings$ridgeline_alpha <- input$settings_ridgeline_alpha
+  })
+  
+  observeEvent(input$settings_pca_color, {
+    plot_settings$encoding_pca_color <- input$settings_pca_color
+  })
+  
+  observeEvent(input$settings_pca_shape, {
+    plot_settings$encoding_pca_shape <- input$settings_pca_shape
+  })
+  
+  observeEvent(input$settings_pca_alpha, {
+    plot_settings$pca_alpha <- input$settings_pca_alpha
+  })
+  
+  observeEvent(input$settings_pca_size, {
+    plot_settings$pca_point_size <- input$settings_pca_size
+  })
+  
+  observeEvent(input$settings_pca_ellipses, {
+    plot_settings$pca_show_ellipses <- input$settings_pca_ellipses
+  })
+  
+  observeEvent(input$settings_pca_loadings, {
+    plot_settings$pca_show_loadings <- input$settings_pca_loadings
+  })
+  
+  observeEvent(input$settings_export_format, {
+    plot_settings$export_format <- input$settings_export_format
+  })
+  
+  observeEvent(input$settings_export_dpi, {
+    plot_settings$export_dpi <- input$settings_export_dpi
+  })
+  
+  #collect custom species colors from pickers
+  observe({
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    custom <- list()
+    for (sp in species_list) {
+      input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
+      val <- input[[input_id]]
+      if (!is.null(val)) {
+        custom[[sp]] <- val
+      }
+    }
+    if (length(custom) > 0) {
+      plot_settings$species_colors_custom <- custom
+    }
+  })
+  
+  #collect custom species shapes from pickers
+  observe({
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    custom <- list()
+    for (sp in species_list) {
+      input_id <- paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp))
+      val <- input[[input_id]]
+      if (!is.null(val)) {
+        custom[[sp]] <- as.integer(val)
+      }
+    }
+    if (length(custom) > 0) {
+      plot_settings$species_shapes <- custom
+    }
+  })
+  
+  #apply preset
+  observeEvent(input$settings_apply_preset, {
+    req(input$settings_load_preset != "")
+    preset <- plot_settings$presets[[input$settings_load_preset]]
+    if (!is.null(preset)) {
+      for (key in names(preset)) {
+        if (key != "name" && key %in% names(reactiveValuesToList(plot_settings))) {
+          plot_settings[[key]] <- preset[[key]]
+        }
+      }
+      showNotification(paste("Applied preset:", preset$name), type = "message")
+      removeModal()
+    }
+  })
+  
+  #save preset
+  observeEvent(input$settings_save_preset, {
+    req(input$settings_preset_name != "")
+    preset_name <- input$settings_preset_name
+    current <- reactiveValuesToList(plot_settings)
+    current$name <- preset_name
+    current$presets <- NULL
+    current$initialized <- NULL
+    plot_settings$presets[[preset_name]] <- current
+    showNotification(paste("Saved preset:", preset_name), type = "success")
+    updateTextInput(session, "settings_preset_name", value = "")
+    updateSelectInput(session, "settings_load_preset",
+                      choices = c("Select..." = "", names(plot_settings$presets)))
+  })
+  
+  #reset to defaults
+  observeEvent(input$settings_reset, {
+    config <- current_species_config()
+    defaults <- generate_default_settings(config)
+    for (key in names(defaults)) {
+      plot_settings[[key]] <- defaults[[key]]
+    }
+    plot_settings$species_colors_custom <- list()
+    plot_settings$species_shapes_custom <- list()
+    showNotification("Settings reset to defaults", type = "message")
+    removeModal()
   })
   
   #species data cache with composite key
@@ -7750,10 +8378,11 @@ server <- function(input, output, session) {
               lc = get_expression_matrix(species_id, input$global_transform, species_data),
               gene = selected_gene,
               sample_info = species_data$sample_info,
-              species_name = config[[species_id]]$name,
+              species_name = config[[species_id]]$short,
               is_dark_mode = is_dark(),
               species_colors = species_colors_dynamic(),
-              transform_type = input$global_transform
+              transform_type = input$global_transform,
+              plot_settings = reactiveValuesToList(plot_settings)
             )
           })
           
@@ -7787,10 +8416,11 @@ server <- function(input, output, session) {
                 lc = get_expression_matrix(species_id, input$global_transform, species_data),
                 gene = selected_gene,
                 sample_info = species_data$sample_info,
-                species_name = config[[species_id]]$name,
+                species_name = config[[species_id]]$short,
                 is_dark_mode = is_dark(),
                 species_colors = species_colors_dynamic(),
-                transform_type = input$global_transform
+                transform_type = input$global_transform,
+                plot_settings = reactiveValuesToList(plot_settings)
               )
               orca(p, file)
             }
