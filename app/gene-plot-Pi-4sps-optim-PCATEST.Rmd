@@ -3737,25 +3737,9 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
       }
     }
   } else {
-    # No dynamic colors provided, use defaults based on species names
-    species_colors <- list()
-    for (sp_name in unique_species) {
-      if (grepl("albicans", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "#74ac4c"  # Green
-      } else if (grepl("glabrata", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "red"  # Red  
-      } else if (grepl("lactis", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "#f8c434"  # Yellow
-      } else if (grepl("cerevisiae", sp_name, ignore.case = TRUE)) {
-        species_colors[[sp_name]] <- "blue"  # Blue
-      } else {
-        # Default colors for unknown species
-        default_palette <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4",
-                            "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F")
-        idx <- (which(unique_species == sp_name) - 1) %% length(default_palette) + 1
-        species_colors[[sp_name]] <- default_palette[idx]
-      }
-    }
+    #no dynamic colors provided, generate from Dark2 palette
+    palette_colors <- get_palette_colors("Dark2", length(unique_species))
+    species_colors <- as.list(setNames(palette_colors, unique_species))
   }
   
   # Build species mapping dynamically from config if provided
@@ -4306,26 +4290,14 @@ generate_cross_species_heatmap <- function(gene_list, species_data_list,
   # prepare heatmap matrix
   heatmap_matrix <- prepare_heatmap_matrix(expression_data, normalization)
   
-  #use species colors from plot_settings, fallback to defaults
+  #use species colors from plot_settings, fallback to palette
   dynamic_colors <- NULL
-  if (!is.null(plot_settings) && !is.null(plot_settings$species_colors)) {
+  if (!is.null(plot_settings) && length(plot_settings$species_colors) > 0) {
     dynamic_colors <- plot_settings$species_colors
   } else if (!is.null(config)) {
-    auto_colors <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", 
-                     "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
-                     "#BB8FCE", "#85C1E2", "#F8B739", "#52BE80")
-    color_index <- 1
-    dynamic_colors <- list()
-    
-    for (sp_code in names(config)) {
-      sp_short <- config[[sp_code]]$short
-      if (sp_short %in% names(DEFAULT_SPECIES_COLORS)) {
-        dynamic_colors[[sp_short]] <- DEFAULT_SPECIES_COLORS[[sp_short]]
-      } else {
-        dynamic_colors[[sp_short]] <- auto_colors[color_index]
-        color_index <- ((color_index - 1) %% length(auto_colors)) + 1
-      }
-    }
+    species_list <- sapply(config, function(x) x$short)
+    palette_name <- if (!is.null(plot_settings$species_palette)) plot_settings$species_palette else "Dark2"
+    dynamic_colors <- derive_species_colors(species_list, palette_name, NULL, config)
   }
   
   heatmap_plot <- create_cross_species_heatmap(
@@ -6899,24 +6871,13 @@ server <- function(input, output, session) {
   
   #dynamic color assignment reads from plot_settings
   species_colors_dynamic <- reactive({
-    if (plot_settings$initialized) {
+    if (plot_settings$initialized && length(plot_settings$species_colors) > 0) {
       return(plot_settings$species_colors)
     }
-    #fallback to old logic if settings not initialized
+    #fallback: generate from current palette setting
     config <- current_species_config()
-    colors <- list()
-    auto_colors <- DYNAMIC_COLOR_PALETTE
-    color_index <- 1
-    for (sp_code in names(config)) {
-      sp_short <- config[[sp_code]]$short
-      if (sp_short %in% names(DEFAULT_SPECIES_COLORS)) {
-        colors[[sp_short]] <- DEFAULT_SPECIES_COLORS[[sp_short]]
-      } else {
-        colors[[sp_short]] <- auto_colors[color_index]
-        color_index <- ((color_index - 1) %% length(auto_colors)) + 1
-      }
-    }
-    colors
+    species_list <- sapply(config, function(x) x$short)
+    derive_species_colors(species_list, plot_settings$species_palette, NULL, config)
   })
   
   # Display current species table
