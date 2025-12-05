@@ -6801,6 +6801,7 @@ server <- function(input, output, session) {
     species_palette = "Dark2",
     species_colors = list(),
     species_shapes = list(),
+    updating_colors_from_palette = FALSE,
     
     #multi-gene line/point encoding
     encoding_multigene_color = "species",
@@ -7733,6 +7734,8 @@ server <- function(input, output, session) {
     plot_settings$species_palette <- input$settings_species_palette
     new_colors <- derive_species_colors(species_list, input$settings_species_palette, NULL, config)
     plot_settings$species_colors <- new_colors
+    #flag to prevent individual picker observer from triggering during palette update
+    plot_settings$updating_colors_from_palette <- TRUE
     #update colourInput UI elements to reflect new palette
     for (sp in species_list) {
       input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
@@ -7740,6 +7743,10 @@ server <- function(input, output, session) {
         colourpicker::updateColourInput(session, input_id, value = new_colors[[sp]])
       }
     }
+    #reset flag after flush to allow individual picker changes
+    shiny::onFlushed(function() {
+      plot_settings$updating_colors_from_palette <- FALSE
+    }, once = TRUE)
   })
   
   observeEvent(input$settings_multigene_color, {
@@ -7817,6 +7824,8 @@ server <- function(input, output, session) {
   #update species_colors directly when individual color pickers change
   observe({
     req(plot_settings$initialized)
+    #skip if palette update is in progress to avoid reactive loop
+    if (isTRUE(plot_settings$updating_colors_from_palette)) return()
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
     
