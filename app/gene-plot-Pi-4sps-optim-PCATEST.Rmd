@@ -418,20 +418,12 @@ get_palette_colors <- function(palette_name, n) {
   return(DYNAMIC_COLOR_PALETTE[1:min(n, length(DYNAMIC_COLOR_PALETTE))])
 }
 
-#derive species colors from palette and config
+#derive species colors from palette
 #stores colors keyed by short name AND full name for flexible lookup
-derive_species_colors <- function(species_list, palette_name, custom_overrides = NULL, config = NULL) {
+derive_species_colors <- function(species_list, palette_name, unused = NULL, config = NULL) {
   n <- length(species_list)
   base_colors <- get_palette_colors(palette_name, n)
-  colors <- setNames(base_colors, species_list)
-  if (!is.null(custom_overrides)) {
-    for (sp in names(custom_overrides)) {
-      if (sp %in% names(colors)) {
-        colors[[sp]] <- custom_overrides[[sp]]
-      }
-    }
-  }
-  result <- as.list(colors)
+  result <- as.list(setNames(base_colors, species_list))
   if (!is.null(config)) {
     for (sp_code in names(config)) {
       sp_short <- config[[sp_code]]$short
@@ -444,20 +436,12 @@ derive_species_colors <- function(species_list, palette_name, custom_overrides =
   result
 }
 
-#derive species shapes from defaults and overrides
+#derive species shapes from defaults
 #stores shapes keyed by short name AND full name for flexible lookup
-derive_species_shapes <- function(species_list, custom_overrides = NULL, config = NULL) {
+derive_species_shapes <- function(species_list, unused = NULL, config = NULL) {
   n <- length(species_list)
   base_shapes <- SHAPES_DEFAULT[((seq_len(n) - 1) %% length(SHAPES_DEFAULT)) + 1]
-  shapes <- setNames(as.integer(base_shapes), species_list)
-  if (!is.null(custom_overrides)) {
-    for (sp in names(custom_overrides)) {
-      if (sp %in% names(shapes)) {
-        shapes[[sp]] <- as.integer(custom_overrides[[sp]])
-      }
-    }
-  }
-  result <- as.list(shapes)
+  result <- as.list(setNames(as.integer(base_shapes), species_list))
   if (!is.null(config)) {
     for (sp_code in names(config)) {
       sp_short <- config[[sp_code]]$short
@@ -547,8 +531,6 @@ generate_default_settings <- function(species_config) {
     species_palette = "Dark2",
     species_colors = derive_species_colors(species_list, "Dark2", NULL, species_config),
     species_shapes = derive_species_shapes(species_list, NULL, species_config),
-    species_colors_custom = list(),
-    species_shapes_custom = list(),
     encoding_multigene_color = "species",
     encoding_multigene_secondary = "linetype",
     gene_palette = "Set2",
@@ -6847,9 +6829,6 @@ server <- function(input, output, session) {
     species_palette = "Dark2",
     species_colors = list(),
     species_shapes = list(),
-    species_colors_custom = list(),
-    species_shapes_custom = list(),
-    palette_changing = FALSE,
     
     #multi-gene line/point encoding
     encoding_multigene_color = "species",
@@ -6917,43 +6896,6 @@ server <- function(input, output, session) {
     plot_settings$initialized <- TRUE
   })
   
-  #update species colors when palette changes
-  observeEvent(plot_settings$species_palette, {
-    req(plot_settings$initialized)
-    config <- current_species_config()
-    species_list <- sapply(config, function(x) x$short)
-    plot_settings$species_colors <- derive_species_colors(
-      species_list,
-      plot_settings$species_palette,
-      plot_settings$species_colors_custom,
-      config
-    )
-  })
-  
-  #update species colors when custom overrides change
-  observeEvent(plot_settings$species_colors_custom, {
-    req(plot_settings$initialized)
-    config <- current_species_config()
-    species_list <- sapply(config, function(x) x$short)
-    plot_settings$species_colors <- derive_species_colors(
-      species_list,
-      plot_settings$species_palette,
-      plot_settings$species_colors_custom,
-      config
-    )
-  }, ignoreInit = TRUE)
-  
-  #update species shapes when custom shapes change
-  observeEvent(plot_settings$species_shapes_custom, {
-    req(plot_settings$initialized)
-    config <- current_species_config()
-    species_list <- sapply(config, function(x) x$short)
-    plot_settings$species_shapes <- derive_species_shapes(
-      species_list,
-      plot_settings$species_shapes_custom,
-      config
-    )
-  }, ignoreInit = TRUE)
   
   #dynamic color assignment reads from plot_settings
   species_colors_dynamic <- reactive({
@@ -7822,20 +7764,13 @@ server <- function(input, output, session) {
     do.call(tagList, picker_list)
   })
   
-  #update settings from modal inputs - clear custom overrides when palette changes
+  #update species colors when palette changes - regenerates all colors from palette
   observeEvent(input$settings_species_palette, {
-    if (!identical(plot_settings$species_palette, input$settings_species_palette)) {
-      plot_settings$palette_changing <- TRUE
-      plot_settings$species_colors_custom <- list()
-      plot_settings$species_palette <- input$settings_species_palette
-    }
-  })
-  
-  #reset palette_changing flag after a short delay
-  observe({
-    req(isTRUE(plot_settings$palette_changing))
-    invalidateLater(200)
-    plot_settings$palette_changing <- FALSE
+    req(plot_settings$initialized)
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    plot_settings$species_palette <- input$settings_species_palette
+    plot_settings$species_colors <- derive_species_colors(species_list, input$settings_species_palette, NULL, config)
   })
   
   observeEvent(input$settings_multigene_color, {
@@ -7910,57 +7845,48 @@ server <- function(input, output, session) {
     plot_settings$export_dpi <- input$settings_export_dpi
   })
   
-  #collect custom species colors from pickers - only store if different from palette
+  #update species_colors directly when individual color pickers change
   observe({
     req(plot_settings$initialized)
-    req(!isTRUE(plot_settings$palette_changing))
-    
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
     
-    #get palette colors to compare against
-    palette_colors <- get_palette_colors(plot_settings$species_palette, length(species_list))
-    palette_map <- setNames(palette_colors, species_list)
-    
-    custom <- list()
     for (sp in species_list) {
       input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
       val <- input[[input_id]]
-      if (!is.null(val)) {
-        #only add to custom if different from palette color
-        palette_col <- toupper(palette_map[[sp]])
-        picked_col <- toupper(val)
-        if (!identical(palette_col, picked_col)) {
-          custom[[sp]] <- val
+      if (!is.null(val) && !is.null(plot_settings$species_colors[[sp]])) {
+        if (val != plot_settings$species_colors[[sp]]) {
+          plot_settings$species_colors[[sp]] <- val
+          #also update full name key
+          sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
+          if (!is.null(sp_full)) {
+            plot_settings$species_colors[[sp_full]] <- val
+          }
         }
       }
     }
-    plot_settings$species_colors_custom <- custom
   })
   
-  #collect custom species shapes from pickers - only store if different from default
+  #update species_shapes directly when individual shape pickers change
   observe({
     req(plot_settings$initialized)
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
-    n <- length(species_list)
     
-    #get default shapes to compare against
-    default_shapes <- SHAPES_DEFAULT[((seq_len(n) - 1) %% length(SHAPES_DEFAULT)) + 1]
-    default_map <- setNames(as.integer(default_shapes), species_list)
-    
-    custom <- list()
     for (sp in species_list) {
       input_id <- paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp))
       val <- input[[input_id]]
-      if (!is.null(val)) {
-        #only add to custom if different from default shape
-        if (as.integer(val) != default_map[[sp]]) {
-          custom[[sp]] <- as.integer(val)
+      if (!is.null(val) && !is.null(plot_settings$species_shapes[[sp]])) {
+        if (as.integer(val) != plot_settings$species_shapes[[sp]]) {
+          plot_settings$species_shapes[[sp]] <- as.integer(val)
+          #also update full name key
+          sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
+          if (!is.null(sp_full)) {
+            plot_settings$species_shapes[[sp_full]] <- as.integer(val)
+          }
         }
       }
     }
-    plot_settings$species_shapes_custom <- custom
   })
   
   #apply preset
@@ -8000,8 +7926,6 @@ server <- function(input, output, session) {
     for (key in names(defaults)) {
       plot_settings[[key]] <- defaults[[key]]
     }
-    plot_settings$species_colors_custom <- list()
-    plot_settings$species_shapes_custom <- list()
     showNotification("Settings reset to defaults", type = "message")
     removeModal()
   })
