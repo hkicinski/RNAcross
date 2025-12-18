@@ -4,11 +4,6 @@ rsconnect/
 test_timecourse_data/
 data/cache/
 
-# R files
-.Rhistory
-.RData
-.Ruserdata
-*.Rproj
 
 # Temp files
 *~
