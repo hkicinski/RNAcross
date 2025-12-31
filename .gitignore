@@ -1,5 +1,5 @@
 # Folders to ignore
-Misc/
+misc/
 rsconnect/
 test_timecourse_data/
 data/cache/
