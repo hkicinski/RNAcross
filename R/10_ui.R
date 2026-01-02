@@ -535,7 +535,7 @@ ui <- page_navbar(
       ),
       p(
         class = "mt-2 mb-0",
-        "Version 2.9.1 - Updated November 2025"
+        "Version 2.9.2 - Updated January 2026"
       )
     )
   ),
