@@ -1,7 +1,11 @@
-#constants
+#rnacross constants and themes module
+#css themes, color palettes, species configuration constants
+#dependencies: 01_config
+
+#timepoint constants
 TIME_POINTS <- c("0min", "15min", "30min", "45min", "1h", "1.5h", "2h", "2.5h", "3h", "3.5h", "4h", "6h", "8h")
 
-#default species for demo data - will be overridden by user uploads
+#default species configuration - will be overridden by user uploads
 DEFAULT_SPECIES_CONFIG <- list(
   cg = list(name = "Candida glabrata", short = "C. glabrata"),
   sc = list(name = "Saccharomyces cerevisiae", short = "S. cerevisiae"),
@@ -9,10 +13,10 @@ DEFAULT_SPECIES_CONFIG <- list(
   ca = list(name = "Candida albicans", short = "C. albicans")
 )
 
-#keep SPECIES_CONFIG for backward compatibility 
+#backward compatibility alias
 SPECIES_CONFIG <- DEFAULT_SPECIES_CONFIG
 
-#default colors - will be extended dynamically for new species
+#default species colors
 DEFAULT_SPECIES_COLORS <- list(
   "C. glabrata" = "red",    
   "S. cerevisiae" = "blue",  
@@ -24,10 +28,272 @@ SPECIES_COLORS <- DEFAULT_SPECIES_COLORS
 
 #additional colors for dynamic species assignment
 DYNAMIC_COLOR_PALETTE <- c("#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", 
-                          "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
-                          "#BB8FCE", "#85C1E2", "#F8B739", "#52BE80")
+                           "#FFEAA7", "#DDA0DD", "#98D8C8", "#F7DC6F",
+                           "#BB8FCE", "#85C1E2", "#F8B739", "#52BE80")
 
-#theme configs
+#qualitative palettes for categorical data
+PALETTES_QUALITATIVE <- c("Dark2", "Set1", "Set2", "Paired", "Accent", "Pastel1")
+
+#sequential palettes for continuous data
+PALETTES_SEQUENTIAL <- c("viridis", "plasma", "inferno", "magma", "cividis", "Blues", "Greens", "YlOrRd")
+
+#diverging palettes for centered data
+PALETTES_DIVERGING <- c("RdBu", "RdYlBu", "PiYG", "PRGn", "BrBG", "Spectral")
+
+#default shape cycle (pch values)
+SHAPES_DEFAULT <- c(16L, 17L, 15L, 18L, 8L, 3L)
+
+#default linetype cycle
+LINETYPES_DEFAULT <- c("solid", "dashed", "dotted", "longdash", "twodash", "dotdash")
+
+#colorblind-safe palette (okabe-ito)
+PALETTE_OKABE_ITO <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#999999")
+
+#' Get n colors from a named palette
+#'
+#' Returns colors from various palette sources including Okabe-Ito,
+#' viridis variants, and RColorBrewer palettes.
+#'
+#' @param palette_name Character name of the palette
+#' @param n Number of colors needed
+#' @return Character vector of hex color codes
+get_palette_colors <- function(palette_name, n) {
+  if (palette_name == "Okabe-Ito") {
+    return(PALETTE_OKABE_ITO[1:min(n, length(PALETTE_OKABE_ITO))])
+  }
+  if (palette_name %in% c("viridis", "plasma", "inferno", "magma", "cividis")) {
+    return(viridis::viridis(n, option = palette_name))
+  }
+  if (palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
+    max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
+    return(RColorBrewer::brewer.pal(min(n, max_colors), palette_name))
+  }
+  return(DYNAMIC_COLOR_PALETTE[1:min(n, length(DYNAMIC_COLOR_PALETTE))])
+}
+
+#' Derive species colors from palette
+#'
+#' Stores colors keyed by short name AND full name for flexible lookup.
+#'
+#' @param species_list Character vector of species short names
+#' @param palette_name Name of color palette to use
+#' @param unused Unused parameter (kept for API compatibility)
+#' @param config Optional species config for name mapping
+#' @return Named list of colors
+derive_species_colors <- function(species_list, palette_name, unused = NULL, config = NULL) {
+  n <- length(species_list)
+  base_colors <- get_palette_colors(palette_name, n)
+  result <- as.list(setNames(base_colors, species_list))
+  if (!is.null(config)) {
+    for (sp_code in names(config)) {
+      sp_short <- config[[sp_code]]$short
+      sp_full <- config[[sp_code]]$name
+      if (sp_short %in% names(result)) {
+        result[[sp_full]] <- result[[sp_short]]
+      }
+    }
+  }
+  result
+}
+
+#' Derive species shapes from defaults
+#'
+#' Stores shapes keyed by short name AND full name for flexible lookup.
+#'
+#' @param species_list Character vector of species short names
+#' @param unused Unused parameter (kept for API compatibility)
+#' @param config Optional species config for name mapping
+#' @return Named list of integer shape values
+derive_species_shapes <- function(species_list, unused = NULL, config = NULL) {
+  n <- length(species_list)
+  base_shapes <- SHAPES_DEFAULT[((seq_len(n) - 1) %% length(SHAPES_DEFAULT)) + 1]
+  result <- as.list(setNames(as.integer(base_shapes), species_list))
+  if (!is.null(config)) {
+    for (sp_code in names(config)) {
+      sp_short <- config[[sp_code]]$short
+      sp_full <- config[[sp_code]]$name
+      if (sp_short %in% names(result)) {
+        result[[sp_full]] <- result[[sp_short]]
+      }
+    }
+  }
+  result
+}
+
+#' Resolve species color from any name format
+#'
+#' @param species_name Species name (short or full)
+#' @param settings_colors Named list of species colors
+#' @param fallback Default color if not found
+#' @return Hex color string
+resolve_species_color <- function(species_name, settings_colors, fallback = "#808080") {
+  if (species_name %in% names(settings_colors)) {
+    return(settings_colors[[species_name]])
+  }
+  fallback
+}
+
+#' Resolve species shape from any name format
+#'
+#' @param species_name Species name (short or full)
+#' @param settings_shapes Named list of species shapes
+#' @param fallback Default shape if not found
+#' @return Integer pch value
+resolve_species_shape <- function(species_name, settings_shapes, fallback = 16L) {
+  if (species_name %in% names(settings_shapes)) {
+    return(as.integer(settings_shapes[[species_name]]))
+  }
+  as.integer(fallback)
+}
+
+#' Get aesthetic mappings for multi-gene plots
+#'
+#' Determines color, shape, and linetype mappings based on encoding settings.
+#'
+#' @param settings Plot settings list
+#' @param species_list Vector of species names
+#' @param gene_list Vector of gene names
+#' @return List with color_values, color_var, linetype_values, linetype_var, shape_values, shape_var
+get_multigene_aesthetics <- function(settings, species_list, gene_list) {
+  n_species <- length(species_list)
+  n_genes <- length(gene_list)
+  
+  shape_values <- NULL
+  shape_var <- NULL
+  linetype_values <- NULL
+  linetype_var <- NULL
+  
+  if (settings$encoding_multigene_color == "species") {
+    color_values <- unlist(settings$species_colors[species_list])
+    color_var <- "species"
+    if (settings$encoding_multigene_secondary == "linetype" && n_genes <= 6) {
+      linetype_values <- setNames(LINETYPES_DEFAULT[1:n_genes], gene_list)
+      linetype_var <- "gene"
+    } else if (settings$encoding_multigene_secondary == "shape" && n_genes <= 6) {
+      shape_values <- setNames(SHAPES_DEFAULT[1:n_genes], gene_list)
+      shape_var <- "gene"
+    }
+  } else {
+    color_values <- get_palette_colors(settings$gene_palette, n_genes)
+    names(color_values) <- gene_list
+    color_var <- "gene"
+    if (settings$encoding_multigene_secondary == "linetype") {
+      linetype_values <- setNames(LINETYPES_DEFAULT[1:min(n_species, 6)], species_list[1:min(n_species, 6)])
+      linetype_var <- "species"
+    }
+  }
+  
+  list(
+    color_values = color_values,
+    color_var = color_var,
+    linetype_values = linetype_values,
+    linetype_var = linetype_var,
+    shape_values = shape_values,
+    shape_var = shape_var
+  )
+}
+
+#' Merge global settings with local overrides
+#'
+#' @param global Global settings list
+#' @param local Local override settings list
+#' @return Merged settings list
+merge_plot_settings <- function(global, local) {
+  if (is.null(local) || isTRUE(local$use_global)) {
+    return(global)
+  }
+  merged <- global
+  for (key in names(local)) {
+    if (!is.null(local[[key]]) && key != "use_global") {
+      merged[[key]] <- local[[key]]
+    }
+  }
+  merged
+}
+
+#' Generate default settings for a species configuration
+#'
+#' Creates a complete settings list with defaults for all plot types.
+#'
+#' @param species_config Species configuration list
+#' @return List of default settings
+generate_default_settings <- function(species_config) {
+  species_list <- sapply(species_config, function(x) x$short)
+  list(
+    species_palette = "Dark2",
+    species_colors = derive_species_colors(species_list, "Dark2", NULL, species_config),
+    species_shapes = derive_species_shapes(species_list, NULL, species_config),
+    encoding_multigene_color = "species",
+    encoding_multigene_secondary = "linetype",
+    gene_palette = "Set2",
+    heatmap_palette = "viridis",
+    heatmap_scale_type = "sequential",
+    heatmap_midpoint = "auto",
+    heatmap_show_row_dendro = TRUE,
+    heatmap_show_col_dendro = TRUE,
+    heatmap_row_annotation = TRUE,
+    ridgeline_palette = "viridis",
+    ridgeline_alpha = 0.8,
+    encoding_pca_color = "species",
+    encoding_pca_shape = "species",
+    pca_alpha = 0.8,
+    pca_point_size = 3,
+    pca_show_ellipses = TRUE,
+    pca_show_loadings = FALSE,
+    export_width = 8,
+    export_height = 6,
+    export_dpi = 300,
+    export_format = "png"
+  )
+}
+
+#' Get bundled presets
+#'
+#' Returns predefined settings presets for common use cases.
+#'
+#' @return Named list of preset configurations
+get_bundled_presets <- function() {
+  list(
+    default = list(
+      name = "Default",
+      species_palette = "Dark2",
+      encoding_multigene_color = "species",
+      gene_palette = "Set2",
+      heatmap_palette = "viridis",
+      ridgeline_palette = "viridis"
+    ),
+    publication = list(
+      name = "Publication",
+      species_palette = "Set1",
+      encoding_multigene_color = "species",
+      gene_palette = "Set1",
+      heatmap_palette = "RdBu",
+      heatmap_scale_type = "diverging",
+      ridgeline_palette = "plasma",
+      export_dpi = 300,
+      export_format = "pdf"
+    ),
+    colorblind = list(
+      name = "Colorblind Safe",
+      species_palette = "Okabe-Ito",
+      encoding_multigene_color = "species",
+      gene_palette = "Okabe-Ito",
+      heatmap_palette = "cividis",
+      ridgeline_palette = "cividis"
+    ),
+    gene_focused = list(
+      name = "Gene Focused",
+      species_palette = "Dark2",
+      encoding_multigene_color = "gene",
+      encoding_multigene_secondary = "linetype",
+      gene_palette = "Set1",
+      heatmap_palette = "viridis",
+      ridgeline_palette = "viridis"
+    )
+  )
+}
+
+#bslib theme configurations
 light_theme <- bs_theme(
   version = 5,
   bootswatch = "flatly",
@@ -54,13 +320,13 @@ dark_theme <- bs_theme(
   fg = "#ffffff"
 )
 
-#sets a loading screen
+#loading screen for waiter
 loading_screen <- tagList(
   spin_flower(),
   h3("Processing data...", style = "color: #2C3E50; margin-top: 15px;")
 )
 
-#custom CSS
+#custom css styles
 custom_css <- tags$style(HTML("
   /* Base styles */
   .nav-tabs .nav-link.active {
@@ -369,8 +635,7 @@ custom_css <- tags$style(HTML("
     border: 1px solid #dee2e6;
   }
   
-  [data-bs-theme='dark'] #combined_orthogroup_container 
-  .orthogroup-species {
+  [data-bs-theme='dark'] #combined_orthogroup_container .orthogroup-species {
     background-color: #2c3034;
     border-color: #444;
   }
@@ -400,7 +665,7 @@ custom_css <- tags$style(HTML("
     margin-right: 5px;
   }
   
-  /* Fix for Species Analysis dropdown menu */
+  /* Fix for Single Species View dropdown menu */
   .navbar {
     overflow: visible !important;
   }
@@ -567,6 +832,71 @@ custom_css <- tags$style(HTML("
     min-height: calc(100vh - 200px);
   }
   
+  /* Cross-Species Ortholog Analysis styles */
+  .ortholog-analysis-panel {
+    background-color: var(--bs-body-bg);
+    border: 2px solid var(--bs-primary);
+    border-radius: 8px;
+    padding: 15px;
+    margin: 15px 0;
+  }
+  
+  [data-bs-theme='dark'] .ortholog-analysis-panel {
+    background-color: #2c3034;
+    border-color: #375a7f;
+  }
+  
+  .coverage-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    margin: 2px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+  }
+  
+  .coverage-badge.high {
+    background-color: #d4edda;
+    color: #155724;
+  }
+  
+  .coverage-badge.medium {
+    background-color: #fff3cd;
+    color: #856404;
+  }
+  
+  .coverage-badge.low {
+    background-color: #f8d7da;
+    color: #721c24;
+  }
+  
+  [data-bs-theme='dark'] .coverage-badge.high {
+    background-color: #1e4620;
+    color: #a3d9a5;
+  }
+  
+  [data-bs-theme='dark'] .coverage-badge.medium {
+    background-color: #664d03;
+    color: #ffc107;
+  }
+  
+  [data-bs-theme='dark'] .coverage-badge.low {
+    background-color: #58151c;
+    color: #f1aeb5;
+  }
+  
+  .ortholog-summary-box {
+    background-color: #f8f9fa;
+    border-left: 4px solid var(--bs-primary);
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+  }
+  
+  [data-bs-theme='dark'] .ortholog-summary-box {
+    background-color: #2c3034;
+  }
+  
   .query-panel {
     background: linear-gradient(135deg, var(--bs-primary) 0%, var(--bs-info) 100%);
     color: white;
@@ -607,8 +937,7 @@ custom_css <- tags$style(HTML("
   }
   
   /* Dark mode adjustments */
-  [data-bs-theme='dark'] 
-  .query-panel {
+  [data-bs-theme='dark'] .query-panel {
     background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
   }
   
@@ -649,8 +978,5 @@ custom_css <- tags$style(HTML("
     z-index: 1000;
     margin-bottom: 20px;
   }
-  
-  /* Gene Explorer specific styles */
-   .gene-explorer-container {
-  
 "))
+
