@@ -211,7 +211,7 @@ ui <- page_navbar(
         id = "splash-logo",
         tags$div(
           id = "svg-wrapper",
-          HTML(paste(readLines(file.path("..", "www", "rnacross-prominent-rna-logo-interactive.svg"), warn = FALSE), collapse = "\n"))
+          HTML(paste(readLines(file.path("www", "rnacross-prominent-rna-logo-interactive.svg"), warn = FALSE), collapse = "\n"))
         )
       ),
       

@@ -84,7 +84,8 @@ suppressMessages({
 
 #data loading
 #load the RData file with HOG-based orthogroups
-load(file.path("..", "data", "RData_perSpecies_HOG_clean_11182025_rlog.RData"))
+#path relative to project root (where app.R is located)
+load(file.path("data", "RData_perSpecies_HOG_clean_11182025_rlog.RData"))
 
 #gene lookup table preprocessing
 #preprocess gene lookup table at startup for faster queries

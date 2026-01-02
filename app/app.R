@@ -1,9 +1,18 @@
-#app.R
-#RNAcross Application Entry Point
+#app/app.R
+#DEPRECATED: This file is for local development only
+#For deployment, use the root-level app.R instead
 #
-#Sources all modular components in dependency order and launches the Shiny app.
+#This version uses ../ paths which work locally but NOT on shinyapps.io
+#
+#To run locally from this directory:
+#  setwd("app")
+#  source("app.R")
+#
+#To deploy, use:
+#  setwd("..")  # go to project root
+#  source("deploy.R")
 
-#source all modular components
+#source all modular components (paths relative to app/ directory)
 source("../R/01_config.R")
 source("../R/02_constants_themes.R")
 source("../R/03_utils.R")
