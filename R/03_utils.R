@@ -17,93 +17,92 @@ hiddenInput <- function(inputId, value) {
   )
 }
 
-#' Create species panel with orthogroup selection
+#' Create species panel content
 #'
-#' Creates a UI panel for species-specific analysis including
+#' Creates the content for a species-specific analysis panel including
 #' gene search, orthogroup selection, and plot display.
+#' Returns content only - nav_panel wrapper handled by caller.
 #'
 #' @param species List containing species info (id, name)
-#' @return Shiny nav_panel UI element
+#' @return Shiny fluidRow UI element (panel content)
 create_species_panel <- function(species) {
-  nav_panel(
-    species$name,
-    fluidRow(
-      column(
-        width = 3,
+  #returns content only - nav_panel wrapper handled by caller
+  fluidRow(
+    column(
+      width = 3,
+      div(
+        class = "sidebar-panel",
+        h4(class = "mb-4", "Analysis Controls"),
+        textInput(
+          paste0(species$id, "_genename"),
+          "Gene name or ID:",
+          placeholder = "e.g., PHO4"
+        ),
+        actionButton(
+          paste0(species$id, "_search_button"),
+          "Search Gene",
+          icon = icon("search"),
+          class = "custom-button"
+        ),
+        #orthogroup selection area
         div(
-          class = "sidebar-panel",
-          h4(class = "mb-4", "Analysis Controls"),
-          textInput(
-            paste0(species$id, "_genename"),
-            "Gene name or ID:",
-            placeholder = "e.g., PHO4"
-          ),
-          actionButton(
-            paste0(species$id, "_search_button"),
-            "Search Gene",
-            icon = icon("search"),
-            class = "custom-button"
-          ),
-          #orthogroup selection area
+          id = paste0(species$id, "_orthogroup_container"),
+          style = "display: none;",
+          hr(),
           div(
-            id = paste0(species$id, "_orthogroup_container"),
-            style = "display: none;",
-            hr(),
+            class = "orthogroup-info",
+            h5("Orthogroup Members"),
+            p("Select genes to analyze from the orthogroup:"),
             div(
-              class = "orthogroup-info",
-              h5("Orthogroup Members"),
-              p("Select genes to analyze from the orthogroup:"),
-              div(
-                id = paste0(species$id, "_orthogroup_selection"),
-                class = "orthogroup-selection",
-                #pre-create the radio buttons with dummy choice
-                radioButtons(
-                  paste0(species$id, "_", species$id, "_selection"),
-                  label = NULL,
-                  choices = c("Search for a gene..." = ""),
-                  selected = ""
-                )
+              id = paste0(species$id, "_orthogroup_selection"),
+              class = "orthogroup-selection",
+              #pre-create the radio buttons with dummy choice
+              radioButtons(
+                paste0(species$id, "_", species$id, "_selection"),
+                label = NULL,
+                choices = c("Search for a gene..." = ""),
+                selected = ""
               )
-            ),
-            actionButton(
-              paste0(species$id, "_plot_button"),
-              "Generate Plot",
-              icon = icon("chart-line"),
-              class = "custom-button"
             )
           ),
-          downloadButton(
-            paste0(species$id, "_download"),
-            "Download Plot",
-            class = "btn btn-secondary mt-2 w-100"
-          ),
-          hr(),
-          div(class = "gene-info",
-              verbatimTextOutput(paste0(species$id, "_gene_info"))
+          actionButton(
+            paste0(species$id, "_plot_button"),
+            "Generate Plot",
+            icon = icon("chart-line"),
+            class = "custom-button"
           )
+        ),
+        downloadButton(
+          paste0(species$id, "_download"),
+          "Download Plot",
+          class = "btn btn-secondary mt-2 w-100"
+        ),
+        hr(),
+        div(class = "gene-info",
+            verbatimTextOutput(paste0(species$id, "_gene_info"))
         )
-      ),
-      column(
-        width = 9,
-        div(
-          class = "results-panel",
-          plotlyOutput(paste0(species$id, "_gene_plot"), height = "400px"),
-          fluidRow(
-            column(
-              width = 6,
-              div(
-                class = "mt-4",
-                h5(paste(species$name, "Search Results")),
-                DTOutput(paste0(species$id, "_search_results"))
-              )
-            ),
-            column(
-              width = 6,
-              div(
-                class = "mt-4",
-                h5("Orthogroup Members"),
-                DTOutput(paste0(species$id, "_orthogroup_results"))
-              )
+      )
+    ),
+    column(
+      width = 9,
+      div(
+        class = "results-panel",
+        plotlyOutput(paste0(species$id, "_gene_plot"), height = "400px"),
+        fluidRow(
+          column(
+            width = 6,
+            div(
+              class = "mt-4",
+              h5(tags$em(species$name), " Search Results"),
+              DTOutput(paste0(species$id, "_search_results"))
+            )
+          ),
+          column(
+            width = 6,
+            div(
+              class = "mt-4",
+              h5("Orthogroup Members"),
+              DTOutput(paste0(species$id, "_orthogroup_results"))
             )
           )
         )

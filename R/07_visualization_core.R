@@ -94,13 +94,14 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
       replicate_colors <- sapply(alpha_values, function(a) adjustcolor(species_color, alpha.f = a))
     }
     
+    plot_title <- paste0("Expression of ", gene, " in <i>", species_name, "</i>")
+    
     p <- ggplot(dt, aes(x = Timepoint, y = exn, color = factor(Replicate), group = Replicate)) +
       geom_point(size = 3, shape = species_shape) + 
       geom_line(linewidth = 1) +
       scale_color_manual(values = replicate_colors) +
       labs(
         y = get_expression_label(transform_type),
-        title = paste("Expression of", gene, "in", species_name),
         color = "Replicate"
       ) +
       theme_minimal() +
@@ -121,12 +122,13 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
     
     ggplotly(p) %>%
       layout(
+        title = list(text = plot_title, font = list(size = 14, color = text_color)),
         plot_bgcolor = plot_bg_color,
         paper_bgcolor = plot_bg_color,
         font = list(color = text_color),
         hoverlabel = list(bgcolor = if(is_dark_mode) "#444" else "white"),
         showlegend = TRUE,
-        margin = list(b = 100)
+        margin = list(b = 100, t = 50)
       ) %>%
       config(
         displayModeBar = TRUE,
@@ -1001,7 +1003,7 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
         plot.background = element_rect(fill = plot_bg_color, color = NA),
         panel.background = element_rect(fill = plot_bg_color, color = NA),
         legend.background = element_rect(fill = plot_bg_color),
-        legend.text = element_text(color = text_color),
+        legend.text = element_text(color = text_color, face = "italic"),
         legend.title = element_text(color = text_color)
       )
     
@@ -1183,7 +1185,7 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE, plot_
       plot.background = element_rect(fill = plot_bg_color, color = NA),
       panel.background = element_rect(fill = plot_bg_color, color = NA),
       strip.background = element_rect(fill = plot_bg_color),
-      strip.text = element_text(color = text_color),
+      strip.text = element_text(color = text_color, face = "italic"),
       legend.background = element_rect(fill = plot_bg_color),
       legend.text = element_text(color = text_color),
       legend.title = element_text(color = text_color)
@@ -1270,7 +1272,7 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
       plot.background = element_rect(fill = plot_bg_color, color = NA),
       panel.background = element_rect(fill = plot_bg_color, color = NA),
       strip.background = element_rect(fill = plot_bg_color),
-      strip.text = element_text(color = text_color),
+      strip.text = element_text(color = text_color, face = "italic"),
       legend.background = element_rect(fill = plot_bg_color),
       legend.text = element_text(color = text_color),
       legend.title = element_text(color = text_color)

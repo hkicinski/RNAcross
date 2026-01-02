@@ -6,12 +6,33 @@
 TIME_POINTS <- c("0min", "15min", "30min", "45min", "1h", "1.5h", "2h", "2.5h", "3h", "3.5h", "4h", "6h", "8h")
 
 #default species configuration - will be overridden by user uploads
+#html fields contain italicized versions for UI display
 DEFAULT_SPECIES_CONFIG <- list(
-  cg = list(name = "Candida glabrata", short = "C. glabrata"),
-  sc = list(name = "Saccharomyces cerevisiae", short = "S. cerevisiae"),
-  kl = list(name = "Kluyveromyces lactis", short = "K. lactis"),
-  ca = list(name = "Candida albicans", short = "C. albicans")
+  cg = list(name = "Candida glabrata", short = "C. glabrata", html = "<em>C. glabrata</em>"),
+  sc = list(name = "Saccharomyces cerevisiae", short = "S. cerevisiae", html = "<em>S. cerevisiae</em>"),
+  kl = list(name = "Kluyveromyces lactis", short = "K. lactis", html = "<em>K. lactis</em>"),
+  ca = list(name = "Candida albicans", short = "C. albicans", html = "<em>C. albicans</em>")
 )
+
+#' Format species name with italics for HTML contexts
+#' @param species_name Species name string
+#' @return HTML-formatted italic species name
+format_species_italic <- function(species_name) {
+  tags$em(species_name)
+}
+
+#' Format species name with italics for ggplot titles
+#' @param prefix Text before species name
+#' @param species_name Species name string
+#' @param suffix Text after species name (optional
+#' @return Expression for ggplot title
+format_species_title <- function(prefix, species_name, suffix = NULL) {
+  if (is.null(suffix)) {
+    bquote(.(prefix) ~ italic(.(species_name)))
+  } else {
+    bquote(.(prefix) ~ italic(.(species_name)) ~ .(suffix))
+  }
+}
 
 #backward compatibility alias
 SPECIES_CONFIG <- DEFAULT_SPECIES_CONFIG
@@ -977,6 +998,18 @@ custom_css <- tags$style(HTML("
     top: 0;
     z-index: 1000;
     margin-bottom: 20px;
+  }
+  
+  /* Species name italicization - select dropdown options only */
+  #ridgeline_species option:not([value='all']),
+  #pca_species option,
+  #group_analysis_species option {
+    font-style: italic;
+  }
+  
+  /* Utility class for italic species names */
+  .species-name-italic {
+    font-style: italic;
   }
 "))
 

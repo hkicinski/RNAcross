@@ -98,31 +98,56 @@ server <- function(input, output, session) {
   
   output$ridgeline_species_ui <- renderUI({
     config <- current_species_config()
-    choices <- c(
-      "All Species" = "all",
-      setNames(names(config), sapply(config, `[[`, "name"))
-    )
-    selectInput(
+    #build choices: "All Species" (not italic) + species names (italic via render)
+    species_choices <- setNames(names(config), sapply(config, `[[`, "name"))
+    all_choices <- c("All Species" = "all", species_choices)
+    
+    selectizeInput(
       "ridgeline_species",
       "Select Species:",
-      choices = choices,
-      selected = "all"
+      choices = all_choices,
+      selected = "all",
+      options = list(
+        render = I("{
+          option: function(item, escape) {
+            if (item.value === 'all') {
+              return '<div>' + escape(item.label) + '</div>';
+            }
+            return '<div><em>' + escape(item.label) + '</em></div>';
+          },
+          item: function(item, escape) {
+            if (item.value === 'all') {
+              return '<div>' + escape(item.label) + '</div>';
+            }
+            return '<div><em>' + escape(item.label) + '</em></div>';
+          }
+        }")
+      )
     )
   })
   
   output$pca_species_ui <- renderUI({
     config <- current_species_config()
-    choices <- setNames(
-      names(config),
-      sapply(config, `[[`, "name")
-    )
-    selectInput(
+    choices <- setNames(names(config), sapply(config, `[[`, "name"))
+    
+    selectizeInput(
       "pca_species",
       "Select Species:",
       choices = choices,
-      selected = names(config)[1]
+      selected = names(config)[1],
+      options = list(
+        render = I("{
+          option: function(item, escape) {
+            return '<div><em>' + escape(item.label) + '</em></div>';
+          },
+          item: function(item, escape) {
+            return '<div><em>' + escape(item.label) + '</em></div>';
+          }
+        }")
+      )
     )
   })
+  
   # Generate dynamic species menu (hidden in cross-species mode)
   output$group_analysis_species_ui <- renderUI({
     #hide when cross-species ortholog analysis is enabled
@@ -131,15 +156,23 @@ server <- function(input, output, session) {
     }
     
     config <- current_species_config()
-    choices <- setNames(
-      names(config),
-      sapply(config, `[[`, "name")
-    )
-    selectInput(
+    choices <- setNames(names(config), sapply(config, `[[`, "name"))
+    
+    selectizeInput(
       "group_analysis_species",
       "Select Species:",
       choices = choices,
-      selected = names(config)[1]
+      selected = names(config)[1],
+      options = list(
+        render = I("{
+          option: function(item, escape) {
+            return '<div><em>' + escape(item.label) + '</em></div>';
+          },
+          item: function(item, escape) {
+            return '<div><em>' + escape(item.label) + '</em></div>';
+          }
+        }")
+      )
     )
   })
   output$dynamic_species_menu <- renderUI({
@@ -153,7 +186,7 @@ server <- function(input, output, session) {
     menu_items <- lapply(names(config), function(id) {
       species <- c(list(id = id), config[[id]])
       nav_panel(
-        title = species$name,
+        title = tags$em(species$name),
         value = paste0("species_", id),
         create_species_panel(species)
       )
@@ -169,10 +202,8 @@ server <- function(input, output, session) {
     checkboxGroupInput(
       "species_select",
       "Select Species to Plot:",
-      choices = setNames(
-        names(config),
-        sapply(config, `[[`, "name")
-      ),
+      choiceNames = unname(lapply(config, function(x) tags$em(x$name))),
+      choiceValues = unname(names(config)),
       selected = names(config)
     )
   })
@@ -647,7 +678,8 @@ server <- function(input, output, session) {
       ),
       colnames = c("Species", "Gene ID", "Gene Name"),
       rownames = FALSE
-    )
+    ) %>%
+      formatStyle("Species", fontStyle = "italic")
     
     # Highlight selected genes
     if (any(all_genes$Selected)) {
@@ -1539,7 +1571,7 @@ server <- function(input, output, session) {
             # Create the UI content
             ui_content <- div(
               h6(
-                species_name,
+                tags$em(species_name),
                 if(nrow(genes_df) > 1) {
                   span(
                     class = "badge bg-warning text-dark ms-2",
@@ -1611,7 +1643,7 @@ server <- function(input, output, session) {
           } else {
             # No genes found for this species
             ui_content <- div(
-              h6(species_name),
+              h6(tags$em(species_name)),
               p("No genes found in this species", style = "color: #999;")
             )
             
@@ -1883,7 +1915,8 @@ server <- function(input, output, session) {
                 ),
                 colnames = c("Species", "Gene ID", "Gene Name"),
                 rownames = FALSE
-              )
+              ) %>%
+                formatStyle("Species", fontStyle = "italic")
               
               if (any(ortho_data$Current)) {
                 dt <- dt %>% formatStyle(
@@ -2565,8 +2598,8 @@ server <- function(input, output, session) {
               style = "margin: 5px 0;",
               span(
                 class = paste("coverage-badge", stats$coverage_class),
-                paste0(stats$species_name, ": ", stats$genes_found, "/", 
-                       stats$total_genes, " (", stats$coverage_pct, "%)")
+                tags$em(stats$species_name), ": ", 
+                paste0(stats$genes_found, "/", stats$total_genes, " (", stats$coverage_pct, "%)")
               ),
               tags$small(
                 style = "margin-left: 8px; color: #666;",
@@ -2615,7 +2648,7 @@ server <- function(input, output, session) {
               
               div(
                 class = "ms-3 mb-2",
-                strong(sp_name, ":"),
+                strong(tags$em(sp_name), ":"),
                 checkboxGroupInput(
                   checkbox_id,
                   label = NULL,
@@ -2994,6 +3027,7 @@ server <- function(input, output, session) {
             caption = "Pathway Expression Summary"
           ) %>%
             formatRound(columns = which(sapply(summary_table[, -ncol(summary_table)], is.numeric)), digits = 2) %>%
+            formatStyle("Species", fontStyle = "italic") %>%
             formatStyle(
               'Pathway',
               'RowColor',
@@ -3446,6 +3480,7 @@ server <- function(input, output, session) {
             rownames = FALSE,
             caption = "Multi-Species Expression Summary"
           ) %>%
+            formatStyle("Species", fontStyle = "italic") %>%
             formatRound(columns = c('Mean_Expression', 'Max_Expression', 'Min_Expression', 'SD_Expression'), 
                         digits = 2)
         } else {
@@ -4529,11 +4564,11 @@ server <- function(input, output, session) {
   output$dynamic_species_panels <- renderUI({
     config <- current_species_config()
     
-    # Create tab panels for each species
+    # Create tab panels for each species with italicized names
     tabs <- lapply(names(config), function(id) {
       species <- c(list(id = id), config[[id]])
       tabPanel(
-        title = species$name,
+        title = tags$em(species$name),
         value = id,
         create_species_panel(species)
       )

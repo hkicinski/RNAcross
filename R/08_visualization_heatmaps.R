@@ -855,7 +855,7 @@ create_cross_species_heatmap <- function(heatmap_matrix, is_dark_mode = FALSE,
     legend_plot <- legend_plot %>% add_annotations(
       x = 0.9,
       y = nrow(legend_data) - i + 1,
-      text = species_code, 
+      text = paste0("<i>", species_code, "</i>"), 
       showarrow = FALSE,
       xanchor = "left"
     )
