@@ -806,7 +806,7 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     
     #build species HOG map
     species_hog_map <- lapply(hog_gene_map[common_hogs], function(hog) {
-      if (!is.null(hog[[species_id]])) hog[[species_id]] else NULL
+      if (!is.null(hog[[species_id]])) { hog[[species_id]] } else { NULL }
     })
     names(species_hog_map) <- common_hogs
     
@@ -1013,7 +1013,7 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
       sample_metadata = sample_metadata,
       common_hogs = colnames(sample_matrix),
       method = aggregation_method,
-      aggregation_stats = if(aggregation_method != "single_only") aggregation_stats else NULL,
+      aggregation_stats = if(aggregation_method != "single_only") { aggregation_stats } else { NULL },
       pca_result = pca_result,
       var_explained = var_explained
     )

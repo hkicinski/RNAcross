@@ -265,7 +265,7 @@ create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
           yanchor = "middle",
           xpad = 10
         )
-      } else NULL
+      } else { NULL }
     )
     
     p <- p %>% layout(

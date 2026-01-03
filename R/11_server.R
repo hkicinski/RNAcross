@@ -1,4 +1,4 @@
-﻿#11_server.R
+#11_server.R
 #RNAcross Server Logic
 #
 #Complete Shiny server function containing all reactive expressions,
@@ -628,7 +628,7 @@ server <- function(input, output, session) {
         distance_method = deps$distance,
         data_transform = deps$transform,
         aggregation_level = deps$aggregation,
-        ortholog_selected = if (exists("ortholog_state")) ortholog_state$selected_orthologs else NULL
+        ortholog_selected = if (exists("ortholog_state")) { ortholog_state$selected_orthologs } else { NULL }
       )
       
       session$sendCustomMessage(type = "saveSession", message = current_state)
@@ -4334,9 +4334,10 @@ server <- function(input, output, session) {
     
     # Process orthology data
     if (input$orthology_source == "orthofinder" && !is.null(input$upload_orthogroups)) {
+      hog_path <- if (!is.null(input$upload_hog)) { input$upload_hog$datapath } else { NULL }
       ortho_data <- process_orthofinder_output(
         input$upload_orthogroups$datapath,
-        if (!is.null(input$upload_hog)) input$upload_hog$datapath else NULL
+        hog_path
       )
       upload_state$uploaded_data$orthofinder <- list(orthogroups = ortho_data)
     } else if (input$orthology_source == "custom" && !is.null(input$upload_custom_ortho)) {
@@ -4369,11 +4370,14 @@ server <- function(input, output, session) {
     
     tryCatch({
       # Build gene lookup table
+      ortho_data_for_lookup <- if (!is.null(upload_state$uploaded_data$orthofinder)) {
+        upload_state$uploaded_data$orthofinder$orthogroups
+      } else {
+        NULL
+      }
       gene_lookup <- build_gene_lookup(
         upload_state$uploaded_data,
-        if (!is.null(upload_state$uploaded_data$orthofinder)) {
-          upload_state$uploaded_data$orthofinder$orthogroups
-        } else NULL
+        ortho_data_for_lookup
       )
       
       # Create custom all_species_data structure

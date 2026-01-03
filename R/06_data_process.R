@@ -200,21 +200,21 @@ process_single_species_pathway <- function(pathway_definitions, species_data, sp
   } else {
     #try prefixed version
     prefix_names <- names(species_data)[grepl("_lcpm$", names(species_data))]
-    if (length(prefix_names) > 0) species_data[[prefix_names[1]]] else NULL
+    if (length(prefix_names) > 0) { species_data[[prefix_names[1]]] } else { NULL }
   }
   
   sample_info <- if (!is.null(species_data$sample_info)) {
     species_data$sample_info
   } else {
     prefix_names <- names(species_data)[grepl("_sample_info$", names(species_data))]
-    if (length(prefix_names) > 0) species_data[[prefix_names[1]]] else NULL
+    if (length(prefix_names) > 0) { species_data[[prefix_names[1]]] } else { NULL }
   }
   
   anno <- if (!is.null(species_data$anno)) {
     species_data$anno
   } else {
     prefix_names <- names(species_data)[grepl("_anno$", names(species_data))]
-    if (length(prefix_names) > 0) species_data[[prefix_names[1]]] else NULL
+    if (length(prefix_names) > 0) { species_data[[prefix_names[1]]] } else { NULL }
   }
   
   if (is.null(lcpm_matrix) || is.null(sample_info)) {
