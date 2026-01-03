@@ -240,3 +240,61 @@ create_orthogroup_details_table <- function(query_result, config = NULL) {
 
   return(dt)
 }
+
+#' Create detailed ortholog mapping table
+#'
+#' Creates a detailed data frame showing all paralogs for a gene set.
+#'
+#' @param gene_mapping List of gene mappings
+#' @param config Species configuration list
+#' @return data.frame with ortholog mapping details
+create_ortholog_mapping_table <- function(gene_mapping, config) {
+  if (is.null(gene_mapping) || length(gene_mapping) == 0) {
+    return(NULL)
+  }
+
+  # build expanded data frame showing ALL paralogs
+  rows_list <- list()
+
+  for (gene_map in gene_mapping) {
+    input_gene <- gene_map$original
+
+    # get max number of paralogs across species for this gene
+    max_paralogs <- max(sapply(names(config), function(sp_code) {
+      orthologs <- gene_map[[sp_code]]
+      if (is.null(orthologs)) 0 else length(orthologs)
+    }), na.rm = TRUE)
+
+    # create one row per paralog position
+    for (i in 1:max_paralogs) {
+      row_data <- list(InputGene = if (i == 1) input_gene else "")
+
+      for (sp_code in names(config)) {
+        col_name <- paste0(config[[sp_code]]$short, "_Ortholog")
+        orthologs <- gene_map[[sp_code]]
+
+        if (is.null(orthologs) || length(orthologs) == 0) {
+          row_data[[col_name]] <- if (i == 1) "-" else ""
+        } else if (i <= length(orthologs)) {
+          # show paralog with indicator if multiple exist
+          if (length(orthologs) == 1) {
+            row_data[[col_name]] <- orthologs[i]
+          } else {
+            row_data[[col_name]] <- paste0(orthologs[i], " [", i, "/", length(orthologs), "]")
+          }
+        } else {
+          row_data[[col_name]] <- ""
+        }
+      }
+
+      rows_list[[length(rows_list) + 1]] <- as.data.frame(row_data, stringsAsFactors = FALSE)
+    }
+  }
+
+  if (length(rows_list) > 0) {
+    mapping_df <- rbindlist(rows_list, fill = TRUE)
+    return(as.data.frame(mapping_df))
+  } else {
+    return(data.frame())
+  }
+}

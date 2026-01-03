@@ -1,6 +1,6 @@
-#rnacross orthology query module
-#gene lookup, orthogroup queries, and cross-species gene mapping
-#dependencies: 01_config, 04_data_io
+# rnacross orthology query module
+# gene lookup, orthogroup queries, and cross-species gene mapping
+# dependencies: 01_config, 04_data_io
 
 #' Query genes using lookup table
 #'
@@ -17,14 +17,14 @@ query_gene_lookup <- function(query, species_filter = NULL, current_data = NULL)
   }
   lookup_table <- current_data$gene_lookup
   query <- toupper(trimws(query))
-  
-  #use precomputed uppercase columns if available
+
+  # use precomputed uppercase columns if available
   if ("gene_id_upper" %in% names(lookup_table)) {
     matches <- lookup_table[gene_id_upper == query | gene_name_upper == query, ]
   } else {
     matches <- lookup_table[toupper(gene_id) == query | toupper(gene_name) == query, ]
   }
-  
+
   if (!is.null(species_filter) && length(species_filter) > 0) {
     matches <- matches[species %in% species_filter]
   }
@@ -42,7 +42,7 @@ query_gene_lookup <- function(query, species_filter = NULL, current_data = NULL)
 get_expression_id <- function(query_gene_id, species_code) {
   lookup_table <- all_species_data$gene_lookup
   match <- lookup_table[gene_id == query_gene_id & species == species_code]
-  
+
   if (nrow(match) > 0) {
     return(match$expression_id[1])
   }
@@ -60,18 +60,18 @@ get_expression_id <- function(query_gene_id, species_code) {
 #' @return data.table of genes in the orthogroup
 get_orthogroup_genes <- function(group_id, use_og = FALSE, current_data = NULL) {
   if (is.null(current_data)) {
-    current_data <- all_species_data  
+    current_data <- all_species_data
   }
   lookup_table <- current_data$gene_lookup
-  
-  #HOG-based search
+
+  # HOG-based search
   result <- lookup_table[hog_id == group_id, ]
-  
-  #fallback to OG if not all species found
+
+  # fallback to OG if not all species found
   if (length(unique(result$species)) < 4 && nrow(result) > 0) {
     og_ids <- unique(result$og_id)
     og_ids <- og_ids[!is.na(og_ids)]
-    
+
     if (length(og_ids) > 0) {
       og_result <- lookup_table[og_id %in% og_ids, ]
       if (nrow(og_result) > nrow(result)) {
@@ -79,7 +79,7 @@ get_orthogroup_genes <- function(group_id, use_og = FALSE, current_data = NULL) 
       }
     }
   }
-  
+
   return(result)
 }
 
@@ -96,7 +96,7 @@ identify_species <- function(query_gene_id, current_data = NULL) {
   }
   lookup_table <- current_data$gene_lookup
   match <- lookup_table[gene_id == query_gene_id]
-  
+
   if (nrow(match) > 0) {
     return(as.character(match$species[1]))
   }
@@ -114,19 +114,19 @@ identify_species <- function(query_gene_id, current_data = NULL) {
 #' @param get_species_data_fn Function to retrieve species data
 #' @return Query result list or NULL if not found
 query_orthogroups <- function(gene_query, current_data, config, get_species_data_fn) {
-  #searches in all species to find the gene
+  # searches in all species to find the gene
   for (species_id in names(config)) {
     species_data <- get_species_data_fn(species_id)
-    
+
     if (!is.null(species_data)) {
       result <- query_gene_flexible(gene_query, species_data, current_data)
-      
+
       if (!is.null(result) && result$source != "none") {
         return(result)
       }
-    } 
+    }
   }
-  
+
   return(NULL)
 }
 
@@ -141,34 +141,36 @@ query_orthogroups <- function(gene_query, current_data, config, get_species_data
 #' @return List with query results including genes_by_species, or NULL if not found
 query_gene_flexible <- function(gene_query, species_data, all_species_data) {
   gene_query <- toupper(trimws(gene_query))
-  if (nchar(gene_query) == 0) return(NULL)
-  
+  if (nchar(gene_query) == 0) {
+    return(NULL)
+  }
+
   debug_cat("\n=== query_gene_flexible ===\n")
   debug_cat("Query:", gene_query, "\n")
-  
-  #use the lookup table to find the gene
+
+  # use the lookup table to find the gene
   lookup_matches <- query_gene_lookup(gene_query, NULL, all_species_data)
-  
+
   debug_cat("Total lookup matches:", nrow(lookup_matches), "\n")
-  
+
   if (nrow(lookup_matches) == 0) {
     debug_cat("No matches found in lookup table\n")
     return(NULL)
   }
-  
-  #get the first match
-  match_info <- lookup_matches[1,]
+
+  # get the first match
+  match_info <- lookup_matches[1, ]
   gene_id <- match_info$gene_id
   expression_id <- match_info$expression_id
   hog_id <- match_info$hog_id
   og_id <- match_info$og_id
-  
-  #use expression_id for retrieving actual expression data
-  actual_gene_id <- if(!is.na(expression_id) && expression_id != "") expression_id else gene_id
-  
+
+  # use expression_id for retrieving actual expression data
+  actual_gene_id <- if (!is.na(expression_id) && expression_id != "") expression_id else gene_id
+
   debug_cat("First match - Gene ID:", gene_id, "HOG:", hog_id, "OG:", og_id, "\n")
-  
-  #build result
+
+  # build result
   result <- list(
     query = gene_query,
     gene_id = gene_id,
@@ -179,12 +181,12 @@ query_gene_flexible <- function(gene_query, species_data, all_species_data) {
     og_id = og_id,
     genes_by_species = list()
   )
-  
-  #get all genes in this HOG (try both HOG and OG)
+
+  # get all genes in this HOG (try both HOG and OG)
   if (!is.na(hog_id) && nchar(hog_id) > 0) {
     hog_genes <- get_orthogroup_genes(hog_id, FALSE, all_species_data)
-    
-    #if we didn't find enough genes, try using the OG ID
+
+    # if we didn't find enough genes, try using the OG ID
     if (nrow(hog_genes) < 4 && !is.na(og_id)) {
       debug_cat("Trying OG-based search as HOG gave limited results\n")
       og_id_value <- og_id
@@ -194,16 +196,16 @@ query_gene_flexible <- function(gene_query, species_data, all_species_data) {
         hog_genes <- og_genes
       }
     }
-    
+
     debug_cat("Total orthogroup genes found:", nrow(hog_genes), "\n")
-    
-    #group by species
+
+    # group by species
     for (sp in unique(hog_genes$species)) {
       sp_genes <- hog_genes[species == sp]
-      
+
       debug_cat("  Species", sp, ":", nrow(sp_genes), "genes\n")
-      
-      #create display format
+
+      # create display format
       genes_df <- data.frame(
         gene_id = sp_genes$gene_id,
         gene_name = sp_genes$gene_name,
@@ -215,11 +217,11 @@ query_gene_flexible <- function(gene_query, species_data, all_species_data) {
         expression_id = sp_genes$expression_id,
         stringsAsFactors = FALSE
       )
-      
+
       result$genes_by_species[[sp]] <- genes_df
     }
   }
-  
+
   return(result)
 }
 
@@ -231,20 +233,22 @@ query_gene_flexible <- function(gene_query, species_data, all_species_data) {
 #' @param species_id Character species code
 #' @return data.frame with gene_id, gene_name, and display columns
 add_gene_names <- function(gene_ids, species_id) {
-  if (length(gene_ids) == 0) return(data.frame(
-    gene_id = character(),
-    gene_name = character(),
-    display = character(),
-    stringsAsFactors = FALSE
-  ))
-  
-  #use lookup table
+  if (length(gene_ids) == 0) {
+    return(data.frame(
+      gene_id = character(),
+      gene_name = character(),
+      display = character(),
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  # use lookup table
   lookup_table <- all_species_data$gene_lookup
-  
-  #get genes for this species
+
+  # get genes for this species
   gene_info <- lookup_table[gene_id %in% gene_ids & species == species_id]
-  
-  #create result dataframe
+
+  # create result dataframe
   result <- data.frame(
     gene_id = gene_info$gene_id,
     gene_name = gene_info$gene_name,
@@ -255,7 +259,7 @@ add_gene_names <- function(gene_ids, species_id) {
     ),
     stringsAsFactors = FALSE
   )
-  
+
   return(result)
 }
 
@@ -273,22 +277,22 @@ extract_orthology_for_genes <- function(gene_list, all_species_data = NULL, conf
     all_species_data <- get_all_species_data()
   }
   if (is.null(config)) {
-    config <- DEFAULT_SPECIES_CONFIG  
+    config <- DEFAULT_SPECIES_CONFIG
   }
   ortholog_gene_map <- list()
-  
+
   for (gene in gene_list) {
     gene_found <- FALSE
-    
-    #use existing query_gene_flexible like Comparative View does
+
+    # use existing query_gene_flexible like Comparative View does
     query_result <- NULL
     for (sp_id in names(config)) {
       sp_data <- list(
-        lcpm = if(!is.null(all_species_data[[sp_id]]$lcpm)) all_species_data[[sp_id]]$lcpm else all_species_data[[sp_id]][[paste0(sp_id, "_lcpm")]],
-        anno = if(!is.null(all_species_data[[sp_id]]$anno)) all_species_data[[sp_id]]$anno else all_species_data[[sp_id]][[paste0(sp_id, "_anno")]],
-        sample_info = if(!is.null(all_species_data[[sp_id]]$sample_info)) all_species_data[[sp_id]]$sample_info else all_species_data[[sp_id]][[paste0(sp_id, "_sample_info")]]
+        lcpm = if (!is.null(all_species_data[[sp_id]]$lcpm)) all_species_data[[sp_id]]$lcpm else all_species_data[[sp_id]][[paste0(sp_id, "_lcpm")]],
+        anno = if (!is.null(all_species_data[[sp_id]]$anno)) all_species_data[[sp_id]]$anno else all_species_data[[sp_id]][[paste0(sp_id, "_anno")]],
+        sample_info = if (!is.null(all_species_data[[sp_id]]$sample_info)) all_species_data[[sp_id]]$sample_info else all_species_data[[sp_id]][[paste0(sp_id, "_sample_info")]]
       )
-      
+
       result <- query_gene_flexible(gene, sp_data, all_species_data)
       if (!is.null(result) && result$source != "none") {
         query_result <- result
@@ -296,11 +300,11 @@ extract_orthology_for_genes <- function(gene_list, all_species_data = NULL, conf
         break
       }
     }
-    
+
     if (!is.null(query_result) && !is.null(query_result$genes_by_species)) {
-      #build entry with all genes from orthogroup
+      # build entry with all genes from orthogroup
       gene_entry <- list(original = gene)
-      
+
       for (sp_code in names(config)) {
         if (sp_code %in% names(query_result$genes_by_species)) {
           sp_genes_df <- query_result$genes_by_species[[sp_code]]
@@ -313,11 +317,60 @@ extract_orthology_for_genes <- function(gene_list, all_species_data = NULL, conf
           gene_entry[[sp_code]] <- NULL
         }
       }
-      
+
       ortholog_gene_map[[length(ortholog_gene_map) + 1]] <- gene_entry
     }
   }
-  
+
   return(ortholog_gene_map)
 }
 
+
+#' Calculate ortholog coverage statistics
+#'
+#' Calculates ortholog coverage statistics for gene set analysis.
+#'
+#' @param gene_mapping List of gene mappings
+#' @param config Species configuration list
+#' @return List of coverage statistics per species
+calculate_ortholog_coverage <- function(gene_mapping, config) {
+  if (is.null(gene_mapping) || length(gene_mapping) == 0) {
+    return(NULL)
+  }
+
+  total_genes <- length(gene_mapping)
+  coverage_stats <- list()
+
+  for (sp_code in names(config)) {
+    # count how many input genes have orthologs in this species
+    genes_with_orthologs <- sum(sapply(gene_mapping, function(gene_map) {
+      !is.null(gene_map[[sp_code]]) && length(gene_map[[sp_code]]) > 0
+    }))
+
+    # get unique ortholog genes (de-duplicate across orthogroups)
+    all_orthologs <- unique(unlist(sapply(gene_mapping, function(gene_map) {
+      gene_map[[sp_code]]
+    })))
+
+    total_orthologs <- length(all_orthologs)
+
+    # count paralogs (genes beyond 1 per orthogroup)
+    paralog_count <- sum(sapply(gene_mapping, function(gene_map) {
+      max(0, length(gene_map[[sp_code]]) - 1)
+    }))
+
+    coverage_pct <- round((genes_with_orthologs / total_genes) * 100, 1)
+
+    coverage_stats[[sp_code]] <- list(
+      species_name = config[[sp_code]]$short,
+      genes_found = genes_with_orthologs,
+      total_orthologs = total_orthologs,
+      paralog_count = paralog_count,
+      total_genes = total_genes,
+      coverage_pct = coverage_pct,
+      coverage_class = if (coverage_pct >= 80) "high" else if (coverage_pct >= 50) "medium" else "low"
+    )
+  }
+
+  return(coverage_stats)
+}
