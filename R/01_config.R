@@ -1,14 +1,14 @@
-#rnacross configuration module
-#global settings, debug functions, library loading, data initialization
-#dependencies: none
+# rnacross configuration module
+# global settings, debug functions, library loading, data initialization
+# dependencies: none
 
-#cran repository setup
+# cran repository setup
 r <- getOption("repos")
 r["CRAN"] <- "https://cloud.r-project.org"
 options(repos = r)
 
-#debug mode configuration
-#set to TRUE to enable debug messages throughout the application
+# debug mode configuration
+# set to TRUE to enable debug messages throughout the application
 DEBUG_MODE <- FALSE
 
 #' Conditional debug message printing
@@ -37,8 +37,8 @@ debug_cat <- function(...) {
   }
 }
 
-#performance cache
-#environment for caching computed results to avoid redundant calculations
+# performance cache
+# environment for caching computed results to avoid redundant calculations
 .performance_cache <- new.env(hash = TRUE)
 
 #' Clear the performance cache
@@ -51,15 +51,15 @@ clear_performance_cache <- function() {
   rm(list = ls(envir = .performance_cache), envir = .performance_cache)
 }
 
-#library loading
+# library loading
 suppressMessages({
-  #core data manipulation
+  # core data manipulation
   library(tidyverse)
   library(data.table)
   library(cowplot)
   library(tidyr)
-  
-  #shiny framework and ui components
+
+  # shiny framework and ui components
   library(shiny)
   library(bslib)
   library(waiter)
@@ -68,8 +68,8 @@ suppressMessages({
   library(DT)
   library(fontawesome)
   library(shinyBS)
-  
-  #visualization
+
+  # visualization
   library(viridis)
   library(ggridges)
   library(ggtree)
@@ -77,28 +77,34 @@ suppressMessages({
   library(treeio)
   library(RColorBrewer)
   library(colourpicker)
-  
-  #file paths
+
+  # complex visualization
+  library(ComplexHeatmap)
+  library(circlize)
+  library(grid)
+  library(grDevices)
+
+  # file paths
   library(here)
 })
 
-#data loading
-#load the RData file with HOG-based orthogroups
-#path relative to project root (where app.R is located)
+# data loading
+# load the RData file with HOG-based orthogroups
+# path relative to project root (where app.R is located)
 load(file.path("data", "RData_perSpecies_HOG_clean_11182025_rlog.RData"))
 
-#gene lookup table preprocessing
-#preprocess gene lookup table at startup for faster queries
+# gene lookup table preprocessing
+# preprocess gene lookup table at startup for faster queries
 if (!is.null(all_species_data$gene_lookup)) {
   if (!is.data.table(all_species_data$gene_lookup)) {
     all_species_data$gene_lookup <- as.data.table(all_species_data$gene_lookup)
   }
-  
-  #precompute uppercase columns for case-insensitive matching
+
+  # precompute uppercase columns for case-insensitive matching
   all_species_data$gene_lookup[, gene_id_upper := toupper(gene_id)]
   all_species_data$gene_lookup[, gene_name_upper := toupper(gene_name)]
-  
-  #create indices on query columns for fast lookups
+
+  # create indices on query columns for fast lookups
   setindex(all_species_data$gene_lookup, gene_id_upper)
   setindex(all_species_data$gene_lookup, gene_name_upper)
   setindex(all_species_data$gene_lookup, hog_id)

@@ -1,20 +1,20 @@
-#rnacross ui module
-#shiny user interface definition
-#dependencies: 02_constants_themes
+# rnacross ui module
+# shiny user interface definition
+# dependencies: 02_constants_themes
 
 ui <- page_navbar(
   theme = light_theme,
   title = NULL,
   id = "nav",
   fillable = FALSE,
-  
-  #header elements before nav panels
+
+  # header elements before nav panels
   header = tagList(
     useWaiter(),
     useShinyjs(),
     custom_css,
-    
-    #splash screen css
+
+    # splash screen css
     tags$style(HTML("
       /* Splash Screen Styles */
       #splash-screen {
@@ -34,13 +34,13 @@ ui <- page_navbar(
         padding: clamp(12px, 3vw, 48px);
         box-sizing: border-box;
       }
-      
+
       #splash-screen.fade-out {
         opacity: 0;
         transform: scale(1.1);
         transition: all 0.8s ease-out;
       }
-      
+
       /* SVG container with safe viewport handling */
       #splash-logo {
         width: 100%;
@@ -51,7 +51,7 @@ ui <- page_navbar(
         padding: 0;
         margin: 0;
       }
-      
+
       /* SVG wrapper and direct SVG styling */
       #svg-wrapper {
         width: min(96vw, 1600px);
@@ -62,7 +62,7 @@ ui <- page_navbar(
         justify-content: center;
         align-items: center;
       }
-      
+
     #svg-wrapper svg, #splash-logo svg {
       width: 100vw !important;
       height: 100vh !important;
@@ -71,36 +71,36 @@ ui <- page_navbar(
       top: 0 !important;
       left: 0 !important;
       }
-      
+
       /* Mobile-specific adjustments */
       @media (max-width: 480px) {
         #svg-wrapper {
           width: 92vw;
           max-height: 80svh;
         }
-        
+
         #svg-wrapper svg, #splash-logo svg {
           max-height: 80svh !important;
         }
       }
-      
+
       /* Very tall narrow screens */
       @media (max-aspect-ratio: 3/4) {
         #svg-wrapper svg, #splash-logo svg {
           max-height: 82svh !important;
         }
       }
-      
+
       /* Prevent any overflow from the splash screen */
       body.splash-active {
         overflow: hidden;
       }
-      
+
       /* Ensure proper scaling on all devices */
       #splash-screen * {
         max-width: 100%;
       }
-            
+
       /* Glowing trail effect */
       .glow-trail {
         position: fixed;
@@ -112,7 +112,7 @@ ui <- page_navbar(
         z-index: 10000;
         overflow: hidden;
       }
-      
+
       .trail-particle {
         position: absolute;
         width: 12px;
@@ -122,36 +122,36 @@ ui <- page_navbar(
         animation: fadeOut 1.5s ease-out forwards;
         pointer-events: none;
       }
-      
+
       @keyframes fadeOut {
-        0% { 
+        0% {
           opacity: 1;
           transform: scale(1) translate(0, 0);
         }
-        100% { 
+        100% {
           opacity: 0;
           transform: scale(0.3) translate(var(--tx, 0), var(--ty, 0));
         }
       }
-      
+
       /* Yeast cell base styles */
       #splash-logo svg #cells > g[id^=\"cell-\"] {
         cursor: pointer;
         transition: all 0.3s ease;
         transform-origin: center;
       }
-      
+
       /* Spinning animation for cells wrapper */
       @keyframes spinCells {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(720deg); }
       }
-      
+
       .spinning-animation {
         animation: spinCells 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
         transform-origin: center;
       }
-      
+
       /* Dispersal animations */
       @keyframes disperseTopLeft {
         to { transform: translate(-200%, -200%) scale(0.1); opacity: 0; }
@@ -165,17 +165,17 @@ ui <- page_navbar(
       @keyframes disperseBottomRight {
         to { transform: translate(200%, 200%) scale(0.1); opacity: 0; }
       }
-      
+
       /*hint text animation hidden for now */
       #interaction-hint {
-        display: none !important; 
+        display: none !important;
       }
 
-      
+
       @keyframes fadeInHint {
         to { opacity: 1; }
       }
-      
+
       /* Skip link styling */
       #splash-skip {
         position: absolute;
@@ -188,25 +188,25 @@ ui <- page_navbar(
         transition: color 0.3s ease;
         z-index: 10001;
       }
-      
+
       #splash-skip:hover {
         color: white;
       }
     ")),
-    
-    #splash screen overlay div
+
+    # splash screen overlay div
     div(
       id = "splash-screen",
-      
-      #skip link
+
+      # skip link
       tags$a(
         id = "splash-skip",
         href = "#",
         onclick = "skipSplash(); return false;",
         "Skip intro →"
       ),
-      
-      #logo SVG with proper wrapper for scaling
+
+      # logo SVG with proper wrapper for scaling
       tags$div(
         id = "splash-logo",
         tags$div(
@@ -214,11 +214,11 @@ ui <- page_navbar(
           HTML(paste(readLines(file.path("www", "rnacross-prominent-rna-logo-interactive.svg"), warn = FALSE), collapse = "\n"))
         )
       ),
-      
-      #interaction hint (hidden by CSS)
+
+      # interaction hint (hidden by CSS)
       div(id = "interaction-hint", "Click the cells to begin"),
-      
-      #hidden audio element for sound effect
+
+      # hidden audio element for sound effect
       tags$audio(
         id = "whoosh-sound",
         src = "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE",
@@ -226,11 +226,11 @@ ui <- page_navbar(
         preload = "auto"
       )
     ),
-    
-    #glow trail container (outside splash screen for z-index)
+
+    # glow trail container (outside splash screen for z-index)
     div(class = "glow-trail", id = "glow-trail-container"),
-    
-    #header bar
+
+    # header bar
     div(
       class = "navbar-container",
       div(
@@ -238,7 +238,7 @@ ui <- page_navbar(
         span(
           div(
             class = "icon-morph-container",
-            style = "margin-right: 3px; position: relative; top: 1px;", 
+            style = "margin-right: 3px; position: relative; top: 1px;",
             icon("dna", class = "fas"),
             icon("chart-line", class = "fas")
           ),
@@ -246,37 +246,32 @@ ui <- page_navbar(
         ),
         div(
           class = "d-flex align-items-center",
-          div(
-            class = "me-3",
-            style = "border-left: 1px solid rgba(255,255,255,0.3); padding-left: 15px;",
-            radioButtons(
-              "global_transform",
-              label = span(style = "font-size: 0.9em; margin-bottom: 3px;", "Expression Data:"),
-              choices = c("TMM + log2CPM" = "lcpm", "DESeq2 rlog" = "rlog"),
-              selected = "lcpm",
-              inline = TRUE
-            )
+          actionButton("show_help", "Tutorial",
+            icon = icon("question-circle"),
+            class = "btn-link text-white me-2"
           ),
-          actionButton("show_help", "Tutorial", icon = icon("question-circle"), 
-                       class = "btn-link text-white me-2"),
-          actionButton("show_settings", label = NULL,
-                       icon = icon("gear"),
-                       class = "btn-link text-white me-2",
-                       title = "Plot settings"),
-          actionButton("theme_toggle", label = NULL,
-                       icon = icon("moon", verify_fa = FALSE),
-                       class = "btn-link text-white",
-                       title = "Toggle dark/light mode")
+          actionButton("show_settings",
+            label = NULL,
+            icon = icon("gear"),
+            class = "btn-link text-white me-2",
+            title = "Plot settings"
+          ),
+          actionButton("theme_toggle",
+            label = NULL,
+            icon = icon("moon", verify_fa = FALSE),
+            class = "btn-link text-white",
+            title = "Toggle dark/light mode"
+          )
         )
       )
     ),
-    
-    #javascript with SVG scaling fixes
+
+    # javascript with SVG scaling fixes
     tags$script(HTML('
     // Auto-hide timer
     let splashTimer;
     let hasInteracted = false;
-    
+
     // Start the auto-hide timer
     function startSplashTimer() {
       splashTimer = setTimeout(function() {
@@ -285,7 +280,7 @@ ui <- page_navbar(
         }
       }, 60000); // 60 seconds
     }
-    
+
     // Initialize event listeners when DOM is ready
     function initializeSplash() {
       // Find yeast cells - try multiple selectors
@@ -294,26 +289,26 @@ ui <- page_navbar(
         console.error("SVG not found");
         return;
       }
-      
+
       // Ensure SVG scales properly without cropping
       svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
       svg.removeAttribute("width");
       svg.removeAttribute("height");
       svg.style.width = "100%";
       svg.style.height = "100%";
-      
+
       const cells = svg.querySelectorAll(\'#cells > g[id^="cell-"], #cells-wrapper > g[id^="cell-"], g[id*="yeast"]\');
       const cellsWrapper = svg.querySelector("#cells-wrapper, #cells");
-      
+
       console.log("Found cells:", cells.length);
       console.log("Found wrapper:", cellsWrapper);
-      
+
       // Add click handlers with improved hover effects
       if (cells.length > 0) {
         cells.forEach(cell => {
           cell.style.cursor = "pointer";
           cell.addEventListener("click", handleYeastClick);
-          
+
           // Improved hover effect
           cell.addEventListener("mouseenter", () => {
             if (!hasInteracted) {
@@ -332,52 +327,52 @@ ui <- page_navbar(
         cellsWrapper.style.cursor = "pointer";
         cellsWrapper.addEventListener("click", handleYeastClick);
       }
-      
+
       // Fallback: make entire SVG clickable
       if (cells.length === 0 && !cellsWrapper) {
         svg.style.cursor = "pointer";
         svg.addEventListener("click", handleYeastClick);
       }
     }
-    
+
     // Handle yeast click
     function handleYeastClick() {
       if (hasInteracted) return; // Prevent multiple clicks
       hasInteracted = true;
-      
+
       // Clear the auto-hide timer
       clearTimeout(splashTimer);
-      
+
       // Play sound effect
       const audio = document.getElementById("whoosh-sound");
       if (audio) {
         audio.play().catch(e => console.log("Audio play failed:", e));
       }
-      
+
       // Get SVG elements
       const svgElement = document.querySelector("#splash-logo svg, #svg-wrapper svg");
       const cellsWrapper = svgElement.querySelector("#cells-wrapper, #cells");
       const cells = svgElement.querySelectorAll(\'#cells > g[id^="cell-"], #cells-wrapper > g[id^="cell-"]\');
-      
+
       // Add spinning animation
       if (cellsWrapper) {
         cellsWrapper.classList.add("spinning-animation");
       }
-      
+
       // Create glowing trails
       createGlowTrails();
-      
+
       // After spin, disperse cells
       setTimeout(() => {
         disperseSVGCells(cells);
-        
+
         // Hide splash after dispersal
         setTimeout(() => {
           hideSplash();
         }, 1000);
       }, 800);
     }
-    
+
     // Create glowing trail particles
     function createGlowTrails() {
       const trailContainer = document.getElementById("glow-trail-container");
@@ -385,61 +380,61 @@ ui <- page_navbar(
       const rect = document.getElementById("splash-logo").getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
-      
+
       // Create burst of particles
       for (let i = 0; i < 40; i++) {
         setTimeout(() => {
           const particle = document.createElement("div");
           particle.className = "trail-particle";
           particle.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
-          
+
           // Random position around center
           const angle = (Math.PI * 2 * i) / 40;
           const radius = 20 + Math.random() * 60;
           const startX = centerX + Math.cos(angle) * radius;
           const startY = centerY + Math.sin(angle) * radius;
-          
+
           particle.style.left = startX + "px";
           particle.style.top = startY + "px";
-          
+
           // Set custom properties for animation
           const tx = Math.cos(angle) * (100 + Math.random() * 200);
           const ty = Math.sin(angle) * (100 + Math.random() * 200);
           particle.style.setProperty("--tx", tx + "px");
           particle.style.setProperty("--ty", ty + "px");
-          
+
           trailContainer.appendChild(particle);
-          
+
           // Remove particle after animation
           setTimeout(() => particle.remove(), 1500);
         }, i * 15);
       }
     }
-    
+
     // Disperse SVG cells
     function disperseSVGCells(cells) {
       const animations = [
         "disperseTopLeft",
-        "disperseTopRight", 
+        "disperseTopRight",
         "disperseBottomLeft",
         "disperseBottomRight"
       ];
-      
+
       cells.forEach((cell, index) => {
         if (index < 4) {
           cell.style.animation = `${animations[index]} 1s ease-in forwards`;
         }
       });
     }
-    
+
     // Hide splash screen
     function hideSplash() {
       const splash = document.getElementById("splash-screen");
       splash.classList.add("fade-out");
-      
+
       // Remove body class when hiding splash
       document.body.classList.remove("splash-active");
-      
+
       setTimeout(() => {
         splash.style.display = "none";
         // Clean up glow trail container
@@ -447,7 +442,7 @@ ui <- page_navbar(
         if (glowContainer) glowContainer.remove();
       }, 800);
     }
-    
+
     // Skip splash function
     function skipSplash() {
       hasInteracted = true;
@@ -455,10 +450,10 @@ ui <- page_navbar(
       hideSplash();
       localStorage.setItem("skipSplash", "true");
     }
-    
+
     // Handle yeast click from SVG (if SVG has onclick)
     window.handleYeastClickFromSVG = handleYeastClick;
-    
+
     // Initialize on page load
     document.addEventListener("DOMContentLoaded", function() {
       // Check if should skip
@@ -475,8 +470,8 @@ ui <- page_navbar(
       }
     });
     ')),
-    
-    #localstorage for session persistence
+
+    # localstorage for session persistence
     tags$script(HTML("
     //save session to browser localStorage
     Shiny.addCustomMessageHandler('saveSession', function(session_state) {
@@ -489,13 +484,13 @@ ui <- page_navbar(
         console.error('localStorage save failed:', e);
       }
     });
-    
+
     //load session on app startup
     $(document).on('shiny:connected', function() {
       console.log('Shiny connected, checking for saved session');
       var session_state = localStorage.getItem('rnacross_session');
       var timestamp = localStorage.getItem('rnacross_session_timestamp');
-      
+
       if (session_state) {
         console.log('Found saved session from:', timestamp);
         try {
@@ -511,7 +506,7 @@ ui <- page_navbar(
         console.log('No saved session found');
       }
     });
-    
+
     //clear session
     Shiny.addCustomMessageHandler('clearSession', function(msg) {
       console.log('Clearing session');
@@ -521,8 +516,8 @@ ui <- page_navbar(
     });
     "))
   ),
-  
-  #footer
+
+  # footer
   footer = tags$footer(
     class = "footer",
     div(
@@ -539,22 +534,20 @@ ui <- page_navbar(
       )
     )
   ),
-  
-  #gene explorer panel
+
+  # gene explorer panel
   nav_panel(
     title = span(icon("dna"), " Gene Explorer"),
     value = "gene_explorer",
-    
     div(
       class = "gene-explorer-container",
       style = "padding-bottom: 120px !important;",
-      
-      #query panel
+
+      # query panel
       div(
         class = "query-panel",
         h3("Gene Query Hub", class = "mb-4"),
         p("Search for a gene to explore its orthogroup across all species. Your query will be available throughout all analysis tabs."),
-        
         fluidRow(
           column(
             width = 8,
@@ -575,8 +568,8 @@ ui <- page_navbar(
             )
           )
         ),
-        
-        #query status
+
+        # query status
         div(
           id = "query_status_container",
           style = "display: none;",
@@ -584,14 +577,13 @@ ui <- page_navbar(
           uiOutput("query_status")
         )
       ),
-      
-      #results container
+
+      # results container
       div(
         id = "gene_explorer_results",
         style = "display: none; magin-bottom: 100px;",
-        
         fluidRow(
-          #left column - tree
+          # left column - tree
           column(
             width = 7,
             div(
@@ -606,16 +598,16 @@ ui <- page_navbar(
               )
             )
           ),
-          
-          #right column - orthogroup info
+
+          # right column - orthogroup info
           column(
             width = 5,
             div(
               class = "orthogroup-summary",
               uiOutput("orthogroup_summary")
             ),
-            
-            #quick action buttons
+
+            # quick action buttons
             div(
               class = "mt-4",
               h5("Quick Actions"),
@@ -638,8 +630,8 @@ ui <- page_navbar(
                 class = "btn btn-secondary w-100"
               )
             ),
-            
-            #orthogroup table
+
+            # orthogroup table
             div(
               class = "mt-4",
               h5("Orthogroup Members"),
@@ -650,65 +642,82 @@ ui <- page_navbar(
       )
     )
   ),
-  #data upload panel
+  # data upload panel
   nav_panel(
     title = span(icon("upload"), " Data Upload"),
     value = "data_upload",
-    
     div(
       class = "container-fluid",
       style = "padding: 20px; padding-bottom: 120px;",
-      
-      #upload status banner
+
+      # upload status banner
       div(
         id = "upload_status_banner",
         style = "display: none;",
         class = "alert",
         uiOutput("upload_status_content")
       ),
-      
-      #main upload interface
+
+      # main upload interface
       fluidRow(
-        #left panel - species definition and upload
+        # left panel - species definition and upload
         column(
           width = 4,
           div(
             class = "sidebar-panel",
             h4("Define Your Dataset", class = "mb-4"),
-            
-            #step 1: define species/groups
+
+            # step 1: define species/groups
             div(
               class = "upload-step",
               h5("Step 1: Define Your Species/Groups", icon("dna")),
               p("Add each species or experimental group. You can use any organisms."),
-              
-              #dynamic species input area
-              div(id = "species_input_area",
-                  div(class = "species-entry mb-2", id = "species_entry_1",
-                      fluidRow(
-                        column(3, 
-                               textInput("species_code_1", "Code*", value = "", 
-                                         placeholder = "e.g., hs, mm, dm")),
-                        column(5, 
-                               textInput("species_name_1", "Full Name*", value = "",
-                                         placeholder = "e.g., Homo sapiens")),
-                        column(4, 
-                               textInput("species_short_1", "Display Name", value = "",
-                                         placeholder = "e.g., Human"))
-                      ),
-                      tags$small(class = "text-muted", 
-                                 "Code: short identifier for files. Full Name: scientific name. Display: for plots.")
+
+              # dynamic species input area
+              div(
+                id = "species_input_area",
+                div(
+                  class = "species-entry mb-2", id = "species_entry_1",
+                  fluidRow(
+                    column(
+                      3,
+                      textInput("species_code_1", "Code*",
+                        value = "",
+                        placeholder = "e.g., hs, mm, dm"
+                      )
+                    ),
+                    column(
+                      5,
+                      textInput("species_name_1", "Full Name*",
+                        value = "",
+                        placeholder = "e.g., Homo sapiens"
+                      )
+                    ),
+                    column(
+                      4,
+                      textInput("species_short_1", "Display Name",
+                        value = "",
+                        placeholder = "e.g., Human"
+                      )
+                    )
+                  ),
+                  tags$small(
+                    class = "text-muted",
+                    "Code: short identifier for files. Full Name: scientific name. Display: for plots."
                   )
+                )
               ),
-              
-              div(class = "mt-2 mb-3",
-                  actionButton("add_species", "Add Species", 
-                               icon = icon("plus"), class = "btn btn-sm btn-success"),
-                  actionButton("remove_species", "Remove Last", 
-                               icon = icon("minus"), class = "btn btn-sm btn-warning ml-2")
+              div(
+                class = "mt-2 mb-3",
+                actionButton("add_species", "Add Species",
+                  icon = icon("plus"), class = "btn btn-sm btn-success"
+                ),
+                actionButton("remove_species", "Remove Last",
+                  icon = icon("minus"), class = "btn btn-sm btn-warning ml-2"
+                )
               ),
-              
-              #current species display
+
+              # current species display
               div(
                 class = "mt-3 p-2 bg-light rounded",
                 h6("Defined Species:", class = "mb-2"),
@@ -716,8 +725,8 @@ ui <- page_navbar(
               ),
               hr()
             ),
-            
-            #step 2: upload expression data
+
+            # step 2: upload expression data
             div(
               class = "upload-step",
               h5("Step 2: Expression Matrices", icon("table")),
@@ -725,8 +734,8 @@ ui <- page_navbar(
               uiOutput("expression_upload_ui"),
               hr()
             ),
-            
-            #step 3: upload sample info
+
+            # step 3: upload sample info
             div(
               class = "upload-step",
               h5("Step 3: Sample Metadata", icon("clipboard")),
@@ -734,30 +743,30 @@ ui <- page_navbar(
               uiOutput("sample_upload_ui"),
               hr()
             ),
-            
-            #step 4: upload annotations (optional)
+
+            # step 4: upload annotations (optional)
             div(
               class = "upload-step",
-              h5("Step 4: Gene Annotations", icon("book"), 
-                 span("(Optional)", class = "badge badge-secondary ml-2")),
+              h5(
+                "Step 4: Gene Annotations", icon("book"),
+                span("(Optional)", class = "badge badge-secondary ml-2")
+              ),
               p("Columns: GeneID, GeneName, Chr"),
               uiOutput("annotation_upload_ui")
             )
           )
         ),
-        
-        #middle panel - orthology
+
+        # middle panel - orthology
         column(
           width = 4,
           div(
             class = "sidebar-panel",
             h4("Orthology Mapping", class = "mb-4"),
-            
             div(
               class = "upload-step",
               h5("Step 5: Define Orthology", icon("sitemap")),
               p("How genes relate across your species"),
-              
               radioButtons(
                 "orthology_source",
                 "Orthology data source:",
@@ -769,63 +778,69 @@ ui <- page_navbar(
                 ),
                 selected = "none"
               ),
-              
               conditionalPanel(
                 condition = "input.orthology_source == 'orthofinder'",
                 fileInput("upload_orthogroups", "Orthogroups.tsv:",
-                          accept = c(".tsv", ".txt")),
+                  accept = c(".tsv", ".txt")
+                ),
                 fileInput("upload_hog", "N0.tsv (HOGs, optional):",
-                          accept = c(".tsv", ".txt"))
+                  accept = c(".tsv", ".txt")
+                )
               ),
-              
               conditionalPanel(
                 condition = "input.orthology_source == 'custom'",
                 fileInput("upload_custom_ortho", "Custom orthology:",
-                          accept = c(".tsv", ".txt", ".csv")),
-                p(class = "text-muted small mt-2",
-                  "Required: gene_id, species_code, orthogroup_id")
+                  accept = c(".tsv", ".txt", ".csv")
+                ),
+                p(
+                  class = "text-muted small mt-2",
+                  "Required: gene_id, species_code, orthogroup_id"
+                )
               ),
-              
               conditionalPanel(
                 condition = "input.orthology_source == 'none'",
-                div(class = "alert alert-info",
-                    icon("info-circle"),
-                    " Single-species mode. Cross-species features will be disabled.")
+                div(
+                  class = "alert alert-info",
+                  icon("info-circle"),
+                  " Single-species mode. Cross-species features will be disabled."
+                )
               ),
               hr()
             ),
-            
-            #action buttons
+
+            # action buttons
             div(
               class = "mt-4",
               actionButton("validate_uploads", "Validate Data",
-                           icon = icon("check-circle"),
-                           class = "btn btn-info w-100 mb-2"),
+                icon = icon("check-circle"),
+                class = "btn btn-info w-100 mb-2"
+              ),
               actionButton("process_uploads", "Process & Load",
-                           icon = icon("cogs"),
-                           class = "btn btn-success w-100 mb-2",
-                           disabled = TRUE),
+                icon = icon("cogs"),
+                class = "btn btn-success w-100 mb-2",
+                disabled = TRUE
+              ),
               actionButton("reset_to_default", "Use Demo Data",
-                           icon = icon("undo"),
-                           class = "btn btn-warning w-100")
+                icon = icon("undo"),
+                class = "btn btn-warning w-100"
+              )
             )
           )
         ),
-        
-        #right panel - validation
+
+        # right panel - validation
         column(
           width = 4,
           div(
             class = "results-panel",
             h4("Validation & Preview", class = "mb-4"),
-            
             div(
               id = "validation_summary",
               style = "min-height: 200px;",
               uiOutput("validation_results")
             ),
-            
-            #preview tabs
+
+            # preview tabs
             div(
               class = "mt-4",
               tabsetPanel(
@@ -836,17 +851,19 @@ ui <- page_navbar(
                 tabPanel("Orthology", DTOutput("upload_ortho_preview"))
               )
             ),
-            
-            #download section
+
+            # download section
             conditionalPanel(
               condition = "output.data_processed == true",
               div(
                 class = "mt-4",
                 h5("Export Configuration"),
                 downloadButton("download_config", "Download Config",
-                               class = "btn btn-primary w-100 mb-2"),
+                  class = "btn btn-primary w-100 mb-2"
+                ),
                 downloadButton("download_processed_rdata", "Download RData",
-                               class = "btn btn-secondary w-100")
+                  class = "btn btn-secondary w-100"
+                )
               )
             )
           )
@@ -854,16 +871,15 @@ ui <- page_navbar(
       )
     )
   ),
-  #single species view tabs
+  # single species view tabs
   nav_panel(
     title = "Single Species View",
     value = "species_analysis_container",
     uiOutput("dynamic_species_panels")
   ),
-  
-  
-  
-  #comparative view tab
+
+
+  # comparative view tab
   nav_panel(
     "Comparative View",
     fluidRow(
@@ -883,8 +899,8 @@ ui <- page_navbar(
             icon = icon("search"),
             class = "custom-button"
           ),
-          
-          #enhanced orthogroup selection container
+
+          # enhanced orthogroup selection container
           div(
             id = "combined_orthogroup_container",
             style = "display: none;",
@@ -893,8 +909,8 @@ ui <- page_navbar(
               class = "orthogroup-info",
               h5("Select Genes from Orthogroup"),
               p("Choose one or more genes per species to compare:"),
-              
-              #information about paralog selection
+
+              # information about paralog selection
               div(
                 id = "paralog_info",
                 class = "alert alert-info mb-3",
@@ -902,14 +918,14 @@ ui <- page_navbar(
                 icon("info-circle"),
                 " When multiple paralogs exist, you can select multiple genes to compare their expression patterns."
               ),
-              #dynamic div
+              # dynamic div
               div(
                 id = "combined_orthogroup_selection_wrapper"
-                #containers will be added dynamically by observers
+                # containers will be added dynamically by observers
               )
             ),
-            
-            #summary of selections
+
+            # summary of selections
             div(
               id = "selection_summary",
               class = "mt-3 p-2 bg-light rounded",
@@ -917,10 +933,9 @@ ui <- page_navbar(
               uiOutput("combined_selection_summary")
             )
           ),
-          
           uiOutput("species_select_ui"),
-          
-          #normalization options
+
+          # normalization options
           div(
             class = "mt-3 mb-3",
             checkboxInput(
@@ -937,15 +952,14 @@ ui <- page_navbar(
               )
             )
           ),
-          
           actionButton(
             "combined_plot_button",
             "Generate Combined Plot",
             icon = icon("chart-line"),
             class = "custom-button"
           ),
-          
-          #download button for the plot
+
+          # download button for the plot
           downloadButton(
             "download_combined_plot",
             "Download Plot",
@@ -967,8 +981,8 @@ ui <- page_navbar(
       )
     )
   ),
-  
-  #gene group analysis tab
+
+  # gene group analysis tab
   nav_panel(
     "Gene Group Analysis",
     fluidRow(
@@ -977,8 +991,8 @@ ui <- page_navbar(
         div(
           class = "sidebar-panel",
           h4("Gene Group Analysis Controls"),
-          
-          #pathway comparison mode toggle
+
+          # pathway comparison mode toggle
           checkboxInput(
             "enable_pathway_comparison",
             label = div(
@@ -988,14 +1002,22 @@ ui <- page_navbar(
             ),
             value = FALSE
           ),
-          
-          #conditional UI for single vs multi-pathway mode
+
+          # conditional UI for single vs multi-pathway mode
           conditionalPanel(
             condition = "input.enable_pathway_comparison == false",
             fileInput(
               "gene_group_file",
               "Upload Gene Groups (CSV)",
               accept = c("text/csv", ".csv")
+            ),
+
+            # functional annotation upload
+            fileInput(
+              "functional_annotations",
+              "Upload Gene Annotations (Optional CSV)",
+              accept = c("text/csv", ".csv"),
+              placeholder = "Gene,Category,Order"
             ),
             textAreaInput(
               "gene_list",
@@ -1004,7 +1026,6 @@ ui <- page_navbar(
               placeholder = "Enter genes, one per line"
             )
           ),
-          
           conditionalPanel(
             condition = "input.enable_pathway_comparison == true",
             div(
@@ -1031,8 +1052,8 @@ ui <- page_navbar(
               accept = c("text/plain", ".txt")
             )
           ),
-          
-          #cross-species ortholog analysis checkbox
+
+          # cross-species ortholog analysis checkbox
           div(
             class = "ortholog-analysis-panel",
             checkboxInput(
@@ -1054,7 +1075,7 @@ ui <- page_navbar(
                 tags$li("Enables multi-species expression comparison")
               )
             ),
-            #remap button (only shows when ortholog analysis is enabled)
+            # remap button (only shows when ortholog analysis is enabled)
             conditionalPanel(
               condition = "input.enable_ortholog_analysis == true",
               div(
@@ -1076,19 +1097,21 @@ ui <- page_navbar(
                 )
               )
             ),
-            #ortholog mapping results (appears after mapping)
+            # ortholog mapping results (appears after mapping)
             div(
               id = "ortholog_mapping_results",
               style = "display: none; margin-top: 10px;",
               uiOutput("ortholog_coverage_summary"),
-              
-              #paralog selection interface
+
+              # paralog selection interface
               div(
                 class = "mt-3 mb-3 p-3",
                 style = "border: 1px solid #ddd; border-radius: 4px; background-color: #f8f9fa;",
                 h6(icon("check-square"), " Select Orthologs to Plot"),
-                tags$small(class = "text-muted d-block mb-2",
-                           "Choose which orthologs to include in visualization"),
+                tags$small(
+                  class = "text-muted d-block mb-2",
+                  "Choose which orthologs to include in visualization"
+                ),
                 uiOutput("paralog_selection_ui"),
                 actionButton(
                   "select_all_paralogs",
@@ -1103,7 +1126,6 @@ ui <- page_navbar(
                   class = "btn btn-sm btn-secondary mt-2"
                 )
               ),
-              
               actionButton(
                 "view_ortholog_details",
                 "View Detailed Mapping",
@@ -1112,10 +1134,9 @@ ui <- page_navbar(
               )
             )
           ),
-          
           uiOutput("group_analysis_species_ui"),
-          
-          #conditional controls based on mode
+
+          # conditional controls based on mode
           conditionalPanel(
             condition = "input.enable_pathway_comparison == false",
             selectInput(
@@ -1147,8 +1168,8 @@ ui <- page_navbar(
               )
             )
           ),
-          
-          #pathway comparison specific controls
+
+          # pathway comparison specific controls
           conditionalPanel(
             condition = "input.enable_pathway_comparison == true",
             selectInput(
@@ -1175,25 +1196,25 @@ ui <- page_navbar(
               selected = "all"
             )
           ),
-          
-          #significance testing control
+
+          # significance testing control
           div(
             id = "significance_controls",
             style = "margin-top: 15px; padding-top: 10px; border-top: 1px solid #ccc;",
             h5("Significance Testing"),
-            
-            #toggle significance markers
+
+            # toggle significance markers
             checkboxInput(
               "show_significance",
               "Show Statistical Significance",
               value = TRUE
             ),
-            
-            #only show other controls if significance is enabled
+
+            # only show other controls if significance is enabled
             conditionalPanel(
               condition = "input.show_significance == true && input.group_viz_type == 'bar'",
-              
-              #p-value threshold slider
+
+              # p-value threshold slider
               sliderInput(
                 "significance_threshold",
                 "P-value Threshold:",
@@ -1202,8 +1223,8 @@ ui <- page_navbar(
                 value = 0.05,
                 step = 0.001
               ),
-              
-              #gene selector for significance testing
+
+              # gene selector for significance testing
               selectizeInput(
                 "sig_test_gene",
                 "Select Gene to Test:",
@@ -1212,8 +1233,8 @@ ui <- page_navbar(
                   placeholder = "Select a gene"
                 )
               ),
-              
-              #timepoint pair selector
+
+              # timepoint pair selector
               selectizeInput(
                 "sig_test_timepoints",
                 "Select Timepoint Comparison:",
@@ -1224,8 +1245,8 @@ ui <- page_navbar(
                   maxItems = 3
                 )
               ),
-              
-              #button to apply the selection
+
+              # button to apply the selection
               actionButton(
                 "apply_sig_test",
                 "Apply Significance Test",
@@ -1233,8 +1254,8 @@ ui <- page_navbar(
               )
             )
           ),
-          
-          #aggregation level control (only shown when ortholog analysis is enabled)
+
+          # aggregation level control (only shown when ortholog analysis is enabled)
           conditionalPanel(
             condition = "input.enable_ortholog_analysis == true",
             radioButtons(
@@ -1247,7 +1268,6 @@ ui <- page_navbar(
               selected = "genes"
             )
           ),
-          
           actionButton(
             "analyze_gene_groups",
             "Generate Visualization",
@@ -1273,14 +1293,15 @@ ui <- page_navbar(
         width = 9,
         div(
           class = "results-panel",
-          plotlyOutput("gene_group_plot", height = "500px"),
+          # dynamic container to support either plotly (interactive) or static plot (publication)
+          uiOutput("heatmap_container", style = "min-height: 500px;"),
           uiOutput("pathway_table_legend"),
           div(
             class = "mt-4",
             DTOutput("gene_group_table")
           ),
-          
-          #significance legend
+
+          # significance legend
           conditionalPanel(
             condition = "input.show_significance == true && input.group_viz_type == 'bar'",
             div(
@@ -1293,16 +1314,17 @@ ui <- page_navbar(
                 tags$li("** : p < 0.01"),
                 tags$li("*** : p < 0.001")
               ),
-              p("Statistical analysis based on unpaired t-test between timepoints.", 
-                style = "font-size: 12px; margin-bottom: 0;")
+              p("Statistical analysis based on unpaired t-test between timepoints.",
+                style = "font-size: 12px; margin-bottom: 0;"
+              )
             )
           )
         )
       )
     )
   ),
-  
-  #pca tab
+
+  # pca tab
   nav_panel(
     "PCA",
     fluidRow(
@@ -1320,14 +1342,14 @@ ui <- page_navbar(
             ),
             selected = "single"
           ),
-          
-          #single species specific controls
+
+          # single species specific controls
           conditionalPanel(
             condition = "input.pca_type == 'single'",
             uiOutput("pca_species_ui")
           ),
-          
-          #multi-species aggregation method
+
+          # multi-species aggregation method
           conditionalPanel(
             condition = "input.pca_type == 'multi'",
             selectInput(
@@ -1344,23 +1366,22 @@ ui <- page_navbar(
               ),
               selected = "eigengene"
             ),
-            
-            #info about the method
+
+            # info about the method
             div(
               class = "alert alert-info mt-2",
               style = "font-size: 0.85em; padding: 8px 12px;",
               uiOutput("hog_aggregation_info")
             )
           ),
-          
           actionButton(
             "run_pca",
             "Run PCA",
             icon = icon("play"),
             class = "custom-button"
           ),
-          
-          #download button for the orthology matrix
+
+          # download button for the orthology matrix
           conditionalPanel(
             condition = "input.pca_type == 'multi'",
             downloadButton(
@@ -1381,8 +1402,8 @@ ui <- page_navbar(
       )
     )
   ),
-  
-  #cross-species heatmap tab 
+
+  # cross-species heatmap tab
   nav_panel(
     "Cross-Species Heatmap",
     fluidRow(
@@ -1454,8 +1475,8 @@ ui <- page_navbar(
       )
     )
   ),
-  
-  #ridgeline plots tab
+
+  # ridgeline plots tab
   nav_panel(
     "Ridgeline Plots",
     fluidRow(
@@ -1505,4 +1526,3 @@ ui <- page_navbar(
     )
   )
 )
-
