@@ -244,26 +244,68 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
 
 
   if (viz_type == "line") {
+    # Handle Log2FC Transformation
+    y_label <- "log2 count per million"
+    if (data_transform == "log2fc") {
+      # Calculate baseline (0min) per Group and Gene
+      baseline_data <- plot_data %>%
+        filter(Timepoint %in% c("0min", "0")) %>%
+        group_by(Group, Gene) %>%
+        summarise(Baseline = mean(Expression, na.rm = TRUE), .groups = "drop")
+
+      plot_data <- plot_data %>%
+        left_join(baseline_data, by = c("Group", "Gene")) %>%
+        mutate(Expression = Expression - Baseline)
+
+      y_label <- "log2 Fold-Change (vs. 0 min)"
+    } else if (data_transform == "rlog") {
+      y_label <- "rlog expression"
+    }
+
     n_genes <- length(unique(plot_data$Gene))
     n_groups <- length(unique(plot_data$Group))
 
-    p <- ggplot(
-      plot_data,
+    p <- ggplot(plot_data) +
       aes(
         x = Timepoint, y = Expression,
         color = Gene, group = interaction(Gene, Replicate)
-      )
-    ) +
+      ) +
       geom_line(linewidth = 1) +
-      geom_point(size = 3) +
-      labs(
+      geom_point(size = 3)
+
+    # Apply settings-based aesthetics if available
+    if (!is.null(plot_settings)) {
+      # Gene Colors
+      if (!is.null(plot_settings$gene_colors)) {
+        # flatten list to named vector
+        gene_cols <- unlist(plot_settings$gene_colors)
+        if (length(gene_cols) > 0) {
+          p <- p + scale_color_manual(values = gene_cols)
+        }
+      } else if (!is.null(plot_settings$gene_palette)) {
+         p <- p + scale_color_manual(values = get_palette_colors(plot_settings$gene_palette, n_genes))
+      }
+
+      # Secondary Encoding
+      if (!is.null(plot_settings$encoding_multigene_secondary)) {
+        sec <- plot_settings$encoding_multigene_secondary
+        if (sec %in% c("linetype", "both")) {
+          p <- p + aes(linetype = Gene)
+        }
+        if (sec %in% c("shape", "both")) {
+          p <- p + aes(shape = Gene)
+        }
+      }
+    }
+
+    p <- p + labs(
         title = "Gene Set Analysis: Trajectory Plot",
         subtitle = paste(
           "Analyzing", n_genes, "genes across", n_groups,
           if (n_groups == 1) "group" else "groups"
         ),
         x = "Timepoint",
-        y = "log2 count per million"
+        y = y_label
       ) +
       theme_minimal()
 

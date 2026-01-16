@@ -1180,7 +1180,7 @@ server <- function(input, output, session) {
               inline = TRUE
             ),
             radioButtons("settings_multigene_secondary", "Secondary encoding:",
-              choices = c("Linetype" = "linetype", "Shape" = "shape", "None" = "none"),
+              choices = c("Linetype" = "linetype", "Shape" = "shape", "Linetype + Shape" = "both", "None" = "none"),
               selected = isolate(plot_settings$encoding_multigene_secondary),
               inline = TRUE
             ),
@@ -1189,7 +1189,11 @@ server <- function(input, output, session) {
               selectInput("settings_gene_palette", "Gene color palette:",
                 choices = c("Set1", "Set2", "Dark2", "Paired", "Accent", "Okabe-Ito"),
                 selected = isolate(plot_settings$gene_palette)
-              )
+              ),
+              hr(),
+              h6("Per-Gene Colors"),
+              p(class = "text-muted", "Click to customize individual gene colors"),
+              uiOutput("gene_color_pickers")
             ),
             hr(),
             h5("Heatmap Settings"),
@@ -1429,8 +1433,101 @@ server <- function(input, output, session) {
       )
     })
 
+
     do.call(tagList, picker_list)
   })
+
+  # Gene Color Pickers Implementation
+  output$gene_color_pickers <- renderUI({
+    req(gene_group_state$ready, gene_group_state$data)
+    
+    # Extract unique genes
+    if (isTRUE(gene_group_state$is_multi_species)) {
+      genes <- unique(gene_group_state$data$GeneLabel)
+    } else {
+      genes <- unique(gene_group_state$data$Gene)
+    }
+    
+    if (length(genes) == 0) return(NULL)
+    genes <- stringr::str_sort(genes, numeric = TRUE)
+    
+    # Isolate settings readings to prevent re-render loop when picking colors
+    isolate({
+      # Get current colors or generate defaults
+      current_colors <- plot_settings$gene_colors
+      if (is.null(current_colors)) {
+        current_colors <- list()
+      }
+      
+      # Generate default if missing
+      defaults <- get_palette_colors(plot_settings$gene_palette %||% "Set2", length(genes))
+      names(defaults) <- genes
+      
+      updated_colors <- current_colors
+      changed <- FALSE
+      for (g in genes) {
+        if (is.null(updated_colors[[g]])) {
+          updated_colors[[g]] <- defaults[[g]]
+          changed <- TRUE
+        }
+      }
+      if (changed) {
+        plot_settings$gene_colors <- updated_colors
+      }
+      
+      # Create pickers
+      picker_list <- lapply(genes, function(g) {
+        id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
+        input_id <- paste0("gene_color_", id_suffix)
+        col <- updated_colors[[g]]
+        
+        div(
+          style = "display: inline-block; margin: 5px; width: 150px;",
+          colourpicker::colourInput(
+            input_id,
+            label = g,
+            value = col,
+            showColour = "background"
+          )
+        )
+      })
+      
+      do.call(tagList, picker_list)
+    })
+  })
+
+  # Update gene colors when palette changes
+  observeEvent(input$settings_gene_palette, {
+    req(gene_group_state$ready, gene_group_state$data)
+    
+    plot_settings$gene_palette <- input$settings_gene_palette
+    plot_settings$updating_colors_from_palette <- TRUE
+    
+    if (isTRUE(gene_group_state$is_multi_species)) {
+      genes <- unique(gene_group_state$data$GeneLabel)
+    } else {
+      genes <- unique(gene_group_state$data$Gene)
+    }
+    if (length(genes) == 0) return()
+    genes <- stringr::str_sort(genes, numeric = TRUE)
+    
+    new_colors <- get_palette_colors(input$settings_gene_palette, length(genes))
+    names(new_colors) <- genes
+    as_list <- as.list(new_colors)
+    plot_settings$gene_colors <- as_list
+    
+    for (g in genes) {
+      id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
+      input_id <- paste0("gene_color_", id_suffix)
+      colourpicker::updateColourInput(session, input_id, value = as_list[[g]])
+    }
+    
+    later::later(function() {
+      plot_settings$updating_colors_from_palette <- FALSE
+    }, delay = 0.3)
+  })
+
+
 
   # update species colors when palette changes - regenerates all colors from palette
   observeEvent(input$settings_species_palette, {
@@ -1463,9 +1560,7 @@ server <- function(input, output, session) {
     plot_settings$encoding_multigene_secondary <- input$settings_multigene_secondary
   })
 
-  observeEvent(input$settings_gene_palette, {
-    plot_settings$gene_palette <- input$settings_gene_palette
-  })
+
 
   observeEvent(input$settings_heatmap_palette, {
     plot_settings$heatmap_palette <- input$settings_heatmap_palette
@@ -3165,9 +3260,42 @@ server <- function(input, output, session) {
     data = NULL,
     type = NULL, # "pathway", "single_species", "multi_species", "pathway_comparison"
     params = list(),
-    ready = FALSE,
     is_multi_species = FALSE
   )
+  
+  # Observer manager for dynamic gene color inputs (prevents slowness/cascading)
+  gene_color_obs_manager <- reactiveValues(observers = list())
+  
+  # Efficiently manage gene color observers
+  observeEvent(gene_group_state$data, {
+    # Clean up old observers
+    lapply(gene_color_obs_manager$observers, function(o) o$destroy())
+    gene_color_obs_manager$observers <- list()
+    
+    req(gene_group_state$ready)
+    
+    # Get unique genes
+    if (isTRUE(gene_group_state$is_multi_species)) {
+      genes <- unique(gene_group_state$data$GeneLabel)
+    } else {
+      genes <- unique(gene_group_state$data$Gene)
+    }
+    
+    if (length(genes) == 0) return()
+    
+    # create new observers
+    gene_color_obs_manager$observers <- lapply(genes, function(g) {
+      id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
+      input_id <- paste0("gene_color_", id_suffix)
+      
+      observeEvent(input[[input_id]], {
+        val <- input[[input_id]]
+        if (!is.null(val)) {
+           plot_settings$gene_colors[[g]] <- val
+        }
+      }, ignoreInit = TRUE)
+    })
+  })
 
   # Dynamic container for visualization (Publication Mode support)
   # Dynamic container for visualization (Publication Mode support)
@@ -3205,7 +3333,8 @@ server <- function(input, output, session) {
     }
   })
 
-  observeEvent(input$analyze_gene_groups, {
+  # Refactored analysis logic to support re-running from settings
+  run_gene_group_analysis <- function() {
     req(!is.null(input$gene_list) || !is.null(input$gene_group_file))
     if (is.null(input$gene_list) && is.null(input$gene_group_file)) {
       showNotification("Please provide either a gene list or upload a file", type = "error")
@@ -3260,7 +3389,7 @@ server <- function(input, output, session) {
               pathway_defs,
               species_data,
               species_name,
-              input$global_transform
+              plot_settings$global_transform
             )
           }
 
@@ -3462,7 +3591,8 @@ server <- function(input, output, session) {
           plot_data <- process_multi_species_gene_set(
             ortholog_state$gene_mapping,
             species_data_list,
-            config
+            config,
+            plot_settings$global_transform
           )
 
           if (is.null(plot_data) || nrow(plot_data) == 0) {
@@ -3517,7 +3647,8 @@ server <- function(input, output, session) {
             species_data,
             current_data,
             config,
-            input$group_analysis_species
+            input$group_analysis_species,
+            plot_settings$global_transform
           )
         }
 
@@ -3615,6 +3746,17 @@ server <- function(input, output, session) {
     )
 
     waiter_hide()
+  }
+
+  observeEvent(input$analyze_gene_groups, {
+    run_gene_group_analysis()
+  })
+
+  # Trigger analysis when data source changes (fixes broken toggle)
+  observeEvent(plot_settings$global_transform, {
+    if (isTRUE(gene_group_state$ready)) {
+      run_gene_group_analysis()
+    }
   })
 
 
@@ -3647,6 +3789,22 @@ server <- function(input, output, session) {
 
         # Use multi-species visualization
         if (params$viz_type == "line") {
+          # Handle Log2FC Transformation
+          y_label <- "log2 count per million"
+          if (params$data_transform == "log2fc") {
+            # Calculate baseline (0min) per Gene and Species
+            baseline_data <- plot_data %>%
+              filter(Timepoint == "0min") %>%
+              group_by(Gene, Species) %>%
+              summarise(Baseline = mean(Expression, na.rm = TRUE), .groups = "drop")
+
+            plot_data <- plot_data %>%
+              left_join(baseline_data, by = c("Gene", "Species")) %>%
+              mutate(Expression = Expression - Baseline)
+
+            y_label <- "log2 Fold-Change (vs. 0 min)"
+          }
+
           # create unique identifier for each gene including paralog info
           plot_data$GeneLabel <- ifelse(
             duplicated(paste(plot_data$Gene, plot_data$Species)) |
@@ -3655,16 +3813,16 @@ server <- function(input, output, session) {
             plot_data$Gene
           )
 
-          # get species colors from plot_settings
-          settings_colors <- plot_settings$species_colors
-          unique_species <- unique(plot_data$Species)
-          species_color_vec <- sapply(unique_species, function(sp) {
-            if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
-          })
-          names(species_color_vec) <- unique_species
+          # get aesthetic mappings
+          aes_config <- get_multigene_aesthetics(
+            plot_settings,
+            unique(plot_data$Species),
+            unique(plot_data$GeneLabel)
+          )
 
           # check if aggregation to species mean is requested
           if (!is.null(params$aggregation_level) && params$aggregation_level == "species_mean") {
+            # ... existing aggregation logic (keep it but careful with reuse)
             # calculate mean and SE for error bars
             plot_summary <- plot_data %>%
               group_by(Species, Timepoint) %>%
@@ -3673,9 +3831,13 @@ server <- function(input, output, session) {
                 SE = sd(Expression, na.rm = TRUE) / sqrt(n()),
                 .groups = "drop"
               )
+
+            # Use species colors for mean plot
+            sp_colors <- unlist(plot_settings$species_colors)
+
             p <- plot_ly(plot_summary,
               x = ~Timepoint, y = ~Mean, color = ~Species,
-              colors = species_color_vec,
+              colors = sp_colors,
               type = "scatter", mode = "lines+markers",
               error_y = list(
                 type = "data",
@@ -3686,7 +3848,7 @@ server <- function(input, output, session) {
               layout(
                 title = "Multi-Species Mean Gene Expression",
                 xaxis = list(title = "Timepoint"),
-                yaxis = list(title = "Mean log2 CPM"),
+                yaxis = list(title = y_label),
                 hovermode = "closest",
                 plot_bgcolor = if (is_dark()) "#2c3034" else "white",
                 paper_bgcolor = if (is_dark()) "#2c3034" else "white",
@@ -3695,45 +3857,57 @@ server <- function(input, output, session) {
             return(p)
           }
 
-          # build color map for gene-species combinations using species colors
-          unique_combos <- unique(paste(plot_data$GeneLabel, plot_data$Species, sep = " | "))
-          combo_colors <- sapply(unique_combos, function(combo) {
-            sp <- sub("^.* \\| ", "", combo)
-            if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
-          })
-          names(combo_colors) <- unique_combos
+          # Prepare aesthetics for ggplot
+          # Map columns based on settings
+          color_col <- if (aes_config$color_var == "species") "Species" else "GeneLabel"
 
-          # create multi-species line plot with paralog distinction
-          plot_data$ComboLabel <- paste(plot_data$GeneLabel, plot_data$Species, sep = " | ")
+          # Construct mapping
+          # Initialize ggplot with base aesthetics
+          p <- ggplot(plot_data, aes_string(
+            x = "Timepoint",
+            y = "Expression",
+            color = color_col,
+            group = "interaction(GeneID, Species, Replicate)"
+          ))
 
-          p <- ggplot(
-            plot_data,
-            aes(
-              x = Timepoint, y = Expression,
-              color = ComboLabel,
-              group = interaction(GeneID, Species, Replicate),
-              text = paste(
-                "Gene:", GeneLabel,
-                "<br>Gene ID:", GeneID,
-                "<br>Species:", Species,
-                "<br>Replicate:", Replicate,
-                "<br>Time:", Timepoint,
-                "<br>Expression:", round(Expression, 2)
-              )
-            )
-          ) +
+          # Add secondary aesthetics if defined
+          if (!is.null(aes_config$linetype_var)) {
+            linetype_col <- if (aes_config$linetype_var == "species") "Species" else "GeneLabel"
+            p <- p + aes_string(linetype = linetype_col)
+            plot_data[[linetype_col]] <- factor(plot_data[[linetype_col]])
+          }
+          if (!is.null(aes_config$shape_var)) {
+            shape_col <- if (aes_config$shape_var == "species") "Species" else "GeneLabel"
+            p <- p + aes_string(shape = shape_col)
+            plot_data[[shape_col]] <- factor(plot_data[[shape_col]])
+          }
+
+          # Add hover text aesthetic
+          plot_data$HoverText <- paste(
+            "Gene:", plot_data$GeneLabel,
+            "<br>Species:", plot_data$Species,
+            "<br>Time:", plot_data$Timepoint,
+            "<br>Value:", round(plot_data$Expression, 2)
+          )
+          p <- p + aes_string(text = "HoverText")
+
+          # Add geometries and update data
+          # Note: We updated plot_data columns (factors/hover), so we need to ensure ggplot uses the updated data
+          # ggplot(plot_data...) captures the data frame at initialization.
+          # To ensure factor updates are respected, we should update the data in the plot object
+          p$data <- plot_data
+
+          p <- p +
+            geom_line(linewidth = 1, alpha = 0.9) +
             geom_point(size = 3, alpha = 0.8) +
-            geom_line(linewidth = 1.2, alpha = 0.9) +
-            scale_color_manual(values = combo_colors) +
             labs(
-              y = "log2 count per million",
+              y = y_label,
               title = "Multi-Species Gene Set Expression",
               subtitle = paste(
                 "Comparing", length(unique(plot_data$GeneID)),
                 "total orthologs across", length(unique(plot_data$Species)), "species"
               ),
-              x = "Timepoint",
-              color = "Gene | Species"
+              x = "Timepoint"
             ) +
             theme_minimal() +
             theme(
@@ -3751,6 +3925,17 @@ server <- function(input, output, session) {
               legend.title = element_text(color = if (is_dark()) "white" else "black"),
               legend.background = element_rect(fill = if (is_dark()) "#2c3034" else "white")
             )
+
+          # Apply scales
+          if (!is.null(aes_config$color_values)) {
+            p <- p + scale_color_manual(values = aes_config$color_values)
+          }
+          if (!is.null(aes_config$linetype_values)) {
+            p <- p + scale_linetype_manual(values = aes_config$linetype_values)
+          }
+          if (!is.null(aes_config$shape_values)) {
+            p <- p + scale_shape_manual(values = aes_config$shape_values)
+          }
 
           ggplotly(p, tooltip = "text") %>%
             layout(

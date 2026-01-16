@@ -1154,7 +1154,8 @@ ui <- page_navbar(
               choices = list(
                 "Raw log2CPM" = "raw",
                 "Centered log2CPM" = "centered",
-                "Z-score" = "zscore"
+                "Z-score" = "zscore",
+                "Log2 Fold-Change (vs 0 min)" = "log2fc"
               ),
               selected = "centered"
             ),

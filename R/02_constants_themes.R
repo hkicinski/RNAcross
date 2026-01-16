@@ -80,16 +80,31 @@ PALETTE_OKABE_ITO <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#
 #' @return Character vector of hex color codes
 get_palette_colors <- function(palette_name, n) {
   if (palette_name == "Okabe-Ito") {
-    return(PALETTE_OKABE_ITO[1:min(n, length(PALETTE_OKABE_ITO))])
+    cols <- PALETTE_OKABE_ITO
+    if (n > length(cols)) {
+      return(colorRampPalette(cols)(n))
+    }
+    return(cols[1:n])
   }
   if (palette_name %in% c("viridis", "plasma", "inferno", "magma", "cividis")) {
     return(viridis::viridis(n, option = palette_name))
   }
   if (palette_name %in% rownames(RColorBrewer::brewer.pal.info)) {
     max_colors <- RColorBrewer::brewer.pal.info[palette_name, "maxcolors"]
-    return(RColorBrewer::brewer.pal(min(n, max_colors), palette_name))
+    if (n <= max_colors) {
+      return(RColorBrewer::brewer.pal(max(n, 3), palette_name)[1:n]) # min 3 for brewer.pal
+    } else {
+      # Interpolate if we need more colors than valid for this palette
+      base_colors <- RColorBrewer::brewer.pal(max_colors, palette_name)
+      return(colorRampPalette(base_colors)(n))
+    }
   }
-  return(DYNAMIC_COLOR_PALETTE[1:min(n, length(DYNAMIC_COLOR_PALETTE))])
+  # Fallback dynamic palette
+  cols <- DYNAMIC_COLOR_PALETTE
+  if (n > length(cols)) {
+    return(colorRampPalette(cols)(n))
+  }
+  return(cols[1:n])
 }
 
 #' Derive species colors from palette
@@ -187,20 +202,56 @@ get_multigene_aesthetics <- function(settings, species_list, gene_list) {
   if (settings$encoding_multigene_color == "species") {
     color_values <- unlist(settings$species_colors[species_list])
     color_var <- "species"
-    if (settings$encoding_multigene_secondary == "linetype" && n_genes <= 6) {
-      linetype_values <- setNames(LINETYPES_DEFAULT[1:n_genes], gene_list)
-      linetype_var <- "gene"
-    } else if (settings$encoding_multigene_secondary == "shape" && n_genes <= 6) {
-      shape_values <- setNames(SHAPES_DEFAULT[1:n_genes], gene_list)
-      shape_var <- "gene"
+    
+    # Secondary encoding logic for species color mode
+    if (n_genes <= 12) { # increased limit slightly
+      if (settings$encoding_multigene_secondary %in% c("linetype", "both")) {
+        linetype_values <- setNames(LINETYPES_DEFAULT[((seq_along(gene_list)-1) %% length(LINETYPES_DEFAULT)) + 1], gene_list)
+        linetype_var <- "gene"
+      }
+      if (settings$encoding_multigene_secondary %in% c("shape", "both")) {
+        shape_values <- setNames(SHAPES_DEFAULT[((seq_along(gene_list)-1) %% length(SHAPES_DEFAULT)) + 1], gene_list)
+        shape_var <- "gene"
+      }
     }
   } else {
-    color_values <- get_palette_colors(settings$gene_palette, n_genes)
-    names(color_values) <- gene_list
+    # Color by Gene
+    # Check if custom gene colors exist, otherwise generate from palette
+    if (!is.null(settings$gene_colors)) {
+      # use custom colors if available, falling back to palette-generated
+      color_values <- sapply(gene_list, function(g) {
+        if (g %in% names(settings$gene_colors)) settings$gene_colors[[g]] else "#000000"
+      })
+      # if any missing (black), maybe fallback to palette
+      if (any(color_values == "#000000")) {
+        defaults <- get_palette_colors(settings$gene_palette, n_genes)
+        names(defaults) <- gene_list
+        missing <- color_values == "#000000"
+        color_values[missing] <- defaults[missing]
+      }
+    } else {
+      color_values <- get_palette_colors(settings$gene_palette, n_genes)
+      names(color_values) <- gene_list
+    }
     color_var <- "gene"
-    if (settings$encoding_multigene_secondary == "linetype") {
-      linetype_values <- setNames(LINETYPES_DEFAULT[1:min(n_species, 6)], species_list[1:min(n_species, 6)])
-      linetype_var <- "species"
+    
+    # Secondary encoding logic for gene color mode
+    if (n_species <= 12) {
+      if (settings$encoding_multigene_secondary %in% c("linetype", "both")) {
+        linetype_values <- setNames(LINETYPES_DEFAULT[((seq_along(species_list)-1) %% length(LINETYPES_DEFAULT)) + 1], species_list)
+        linetype_var <- "species"
+      }
+      # Shape is usually not ideal for lines, but useful for points
+      if (settings$encoding_multigene_secondary %in% c("shape", "both")) {
+        # Shape by species
+        # Use species_shapes from settings if available
+        if (!is.null(settings$species_shapes)) {
+          shape_values <- unlist(settings$species_shapes[species_list])
+        } else {
+           shape_values <- setNames(SHAPES_DEFAULT[((seq_along(species_list)-1) %% length(SHAPES_DEFAULT)) + 1], species_list)
+        }
+        shape_var <- "species"
+      }
     }
   }
   
