@@ -1261,12 +1261,9 @@ make_publication_heatmap <- function(mat, species_prefix, species_name, color_fu
 
   # Calculate Height
   # If raster/compact, use fixed null to let it fill available space (or relative)
-  # If full (not raster), use dynamic height based on gene count
-  hm_height <- if (use_raster) {
-    NULL # Let ComplexHeatmap/Grid handle it (fills viewport)
-  } else {
-    unit(nrow(mat) * 0.4 + 2, "cm") # 4mm per gene + 2cm buffer
-  }
+  # If full (not raster), we used to calculate dynamic height. 
+  # But user wants full veritcal usage.
+  hm_height <- NULL
 
   # Create Heatmap
   ht <- Heatmap(
@@ -1292,7 +1289,7 @@ make_publication_heatmap <- function(mat, species_prefix, species_name, color_fu
     column_names_rot = 45,
     column_names_gp = gpar(fontsize = 10),
     column_title = species_name,
-    column_title_gp = gpar(fontsize = 12, fontface = "bold"),
+    column_title_gp = gpar(fontsize = 12, fontface = "bold.italic"),
 
     # Legend
     show_heatmap_legend = show_legend,
@@ -1371,46 +1368,70 @@ draw_2x2_heatmap <- function(ht_list, legend) {
   # This function renders immediately
 
   grid.newpage()
-  pushViewport(viewport(layout = grid.layout(2, 3, widths = unit(c(1, 1, 0.5), "null"))))
 
-  # Top Left: S. cerevisiae
-  pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
-  if (length(ht_list) >= 1 && !is.null(ht_list[[1]])) {
-    draw(ht_list[[1]], newpage = FALSE)
+  if (length(ht_list) == 1) {
+    # Single Heatmap Layout
+    pushViewport(viewport(layout = grid.layout(1, 2, widths = unit(c(0.85, 0.15), "null"))))
+
+    # Heatmap
+    pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
+    if (!is.null(ht_list[[1]])) {
+      draw(ht_list[[1]], newpage = FALSE)
+    }
+    # grid.text("A", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold")) # No label for single species
+    popViewport()
+
+    # Legend
+    pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2))
+    if (!is.null(legend)) {
+      draw(legend, x = unit(0.1, "npc"), y = unit(0.5, "npc"), just = "left")
+    }
+    popViewport()
+    popViewport()
+
+  } else {
+    # 2x2 Grid Layout
+    pushViewport(viewport(layout = grid.layout(2, 3, widths = unit(c(1, 1, 0.5), "null"))))
+
+    # Top Left: S. cerevisiae (or first species)
+    pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
+    if (length(ht_list) >= 1 && !is.null(ht_list[[1]])) {
+      draw(ht_list[[1]], newpage = FALSE)
+    }
+    grid.text("A", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
+    popViewport()
+
+    # Top Right: C. glabrata
+    pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2))
+    if (length(ht_list) >= 2 && !is.null(ht_list[[2]])) {
+      draw(ht_list[[2]], newpage = FALSE)
+    }
+    grid.text("B", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
+    popViewport()
+
+    # Bottom Left: C. albicans
+    pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
+    if (length(ht_list) >= 3 && !is.null(ht_list[[3]])) {
+      draw(ht_list[[3]], newpage = FALSE)
+    }
+    grid.text("C", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
+    popViewport()
+
+    # Bottom Right: K. lactis
+    pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 2))
+    if (length(ht_list) >= 4 && !is.null(ht_list[[4]])) {
+      draw(ht_list[[4]], newpage = FALSE)
+    }
+    grid.text("D", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
+    popViewport()
+
+    # Legend Column (Spanning both rows)
+    pushViewport(viewport(layout.pos.row = 1:2, layout.pos.col = 3))
+    if (!is.null(legend)) {
+      draw(legend, x = unit(0.1, "npc"), y = unit(0.5, "npc"), just = "left")
+    }
+    popViewport()
+
+    popViewport() # Main layout
   }
-  grid.text("A", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-  popViewport()
-
-  # Top Right: C. glabrata
-  pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2))
-  if (length(ht_list) >= 2 && !is.null(ht_list[[2]])) {
-    draw(ht_list[[2]], newpage = FALSE)
-  }
-  grid.text("B", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-  popViewport()
-
-  # Bottom Left: C. albicans
-  pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
-  if (length(ht_list) >= 3 && !is.null(ht_list[[3]])) {
-    draw(ht_list[[3]], newpage = FALSE)
-  }
-  grid.text("C", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-  popViewport()
-
-  # Bottom Right: K. lactis
-  pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 2))
-  if (length(ht_list) >= 4 && !is.null(ht_list[[4]])) {
-    draw(ht_list[[4]], newpage = FALSE)
-  }
-  grid.text("D", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-  popViewport()
-
-  # Legend Column (Spanning both rows)
-  pushViewport(viewport(layout.pos.row = 1:2, layout.pos.col = 3))
-  if (!is.null(legend)) {
-    draw(legend, x = unit(0.1, "npc"), y = unit(0.5, "npc"))
-  }
-  popViewport()
-
-  popViewport() # Main layout
 }

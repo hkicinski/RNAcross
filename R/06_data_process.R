@@ -71,6 +71,8 @@ process_gene_group_data <- function(gene_groups, species_data, all_species_data,
             data.frame(
               Gene = gene,
               Group = gene_groups$group_name[gene_groups$group_member == gene],
+              Species = config[[species_code]]$short,
+              SpeciesCode = species_code,
               Timepoint = factor(species_data$sample_info$Timepoint, levels = TIME_POINTS),
               Replicate = species_data$sample_info$Replicate,
               Expression = as.numeric(expr_matrix[gene_id, ]),

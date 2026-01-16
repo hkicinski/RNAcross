@@ -1241,7 +1241,7 @@ server <- function(input, output, session) {
                     "Z-score (by gene)" = "zscore",
                     "Centered log2CPM" = "centered"
                   ),
-                  selected = isolate(plot_settings$data_transform %||% "centered")
+                  selected = isolate(plot_settings$data_transform %||% "log2fc")
                 ),
                 selectInput("settings_time_axis", "Time Axis:",
                   choices = c(
@@ -3299,9 +3299,32 @@ server <- function(input, output, session) {
 
   # Dynamic container for visualization (Publication Mode support)
   # Dynamic container for visualization (Publication Mode support)
+  
+  # AUTO-SWITCH LOGIC:
+  # When user changes "Visualization Type" in sidebar (Line/Bar/Heatmap),
+  # they expect to see that interactive plot.
+  # If we are currently stuck in "Publication Mode", reset it to Interactive.
+  observeEvent(input$group_viz_type, {
+    req(input$group_viz_type)
+    current_mode <- isolate(plot_settings$viz_mode)
+    if (!is.null(current_mode) && current_mode == "publication") {
+      # Show notification to explain why it switched
+      showNotification("Switched to Interactive Mode", type = "message", duration = 2)
+      
+      # Reset state
+      plot_settings$viz_mode <- "interactive"
+      updateRadioButtons(session, "settings_viz_mode", selected = "interactive")
+    }
+  }, ignoreInit = TRUE)
+
+  # Sync settings_viz_mode from modal to persistent storage
+  observeEvent(input$settings_viz_mode, {
+    plot_settings$viz_mode <- input$settings_viz_mode
+  })
+
   output$heatmap_container <- renderUI({
-    # Default to interactive if missing
-    mode <- input$settings_viz_mode
+    # Use persistent settings instead of transient input
+    mode <- plot_settings$viz_mode
     if (is.null(mode)) mode <- "interactive"
 
     if (mode == "publication") {
@@ -4090,8 +4113,13 @@ server <- function(input, output, session) {
     ht_list <- list()
     config <- current_species_config()
 
-    # Defined order: Sc, Cg, Ca, Kl
-    species_order <- c("sc", "cg", "ca", "kl")
+    # Defined order: Sc, Cg, Ca, Kl needed for multi-species
+    # For single species, just use the selected one
+    species_order <- if (isTRUE(gene_group_state$is_multi_species)) {
+      c("sc", "cg", "ca", "kl")
+    } else {
+      input$group_analysis_species
+    }
 
     # Gene Order Logic
     all_genes <- unique(plot_data$Gene) # Or GeneID?
@@ -4223,7 +4251,7 @@ server <- function(input, output, session) {
         species_prefix = paste0(config[[sp]]$short, "-"),
         species_name = config[[sp]]$name,
         color_fun = color_fun,
-        row_annot = if (sp == species_order[4]) row_annot else NULL, # Only show annotation on the right-most heatmap?
+        row_annot = if (sp == tail(species_order, 1)) row_annot else NULL, # Only show annotation on the right-most heatmap
         show_legend = FALSE, # Shared legend used
         show_row_names = show_rows,
         category_colors = pal,
