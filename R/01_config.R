@@ -77,6 +77,8 @@ suppressMessages({
   library(treeio)
   library(RColorBrewer)
   library(colourpicker)
+  library(ggprism)
+  library(ggrepel)
 
   # complex visualization
   library(ComplexHeatmap)

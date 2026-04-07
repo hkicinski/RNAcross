@@ -974,19 +974,33 @@ server <- function(input, output, session) {
     waiter_hide()
   })
 
-  # pca plot render - reactive to plot_state and plot_settings
-  output$pca_plot <- renderPlotly({
+  # pca plot dynamic container
+  output$pca_plot_container <- renderUI({
+    mode <- plot_settings$pca_viz_mode
+    if (is.null(mode)) mode <- "interactive"
+
+    if (mode == "publication") {
+      height <- plot_settings$pca_export_height
+      if (is.null(height)) height <- 8
+      plotOutput("pca_plot_publication", height = paste0(height * 100, "px"))
+    } else {
+      plotlyOutput("pca_plot_interactive", height = "500px")
+    }
+  })
+
+  # Helper function to generate PCA plots
+  generate_pca_plot <- function() {
     if (!isTRUE(plot_state$pca_ready) || is.null(plot_state$pca_data)) {
-      return(plotly_empty() %>% add_annotations(text = "Click Run PCA to generate plot", showarrow = FALSE))
+      return(NULL)
     }
 
     pca_data <- plot_state$pca_data
+    if (!is.null(pca_data$error)) {
+      return(NULL)
+    }
+
     dark_mode <- is_dark()
     current_settings <- reactiveValuesToList(plot_settings)
-
-    if (!is.null(pca_data$error)) {
-      return(plotly_empty() %>% add_annotations(text = paste("Error:", pca_data$error), showarrow = FALSE))
-    }
 
     if (pca_data$type == "single") {
       create_pca_plot(
@@ -1002,10 +1016,29 @@ server <- function(input, output, session) {
         aggregation_method = pca_data$aggregation_method,
         species_config = current_species_config(),
         all_species_data_obj = get_all_species_data(),
-        transform_type = plot_settings$global_transform,
+        transform_type = current_settings$global_transform,
         plot_settings = current_settings
       )
     }
+  }
+
+  output$pca_plot_interactive <- renderPlotly({
+    p <- generate_pca_plot()
+    if (is.null(p)) {
+      if (!is.null(plot_state$pca_data$error)) {
+        return(plotly_empty() %>% add_annotations(text = paste("Error:", plot_state$pca_data$error), showarrow = FALSE))
+      }
+      return(plotly_empty() %>% add_annotations(text = "Click Run PCA to generate plot", showarrow = FALSE))
+    }
+    p
+  })
+
+  output$pca_plot_publication <- renderPlot({
+    p <- generate_pca_plot()
+    if (is.null(p)) {
+      return(NULL)
+    }
+    p
   })
 
   # pca debug output
@@ -1045,6 +1078,74 @@ server <- function(input, output, session) {
       }
     }
   })
+
+  # ----- PCA Export Modal -----
+  observeEvent(input$show_pca_export_modal, {
+    showModal(modalDialog(
+      title = "Export PCA Plot",
+      selectInput("pca_export_format", "Format:", choices = c("pdf" = "pdf", "png" = "png", "svg" = "svg")),
+      numericInput("pca_export_width_modal", "Width (inches):", value = if (!is.null(plot_settings$pca_export_width)) plot_settings$pca_export_width else 10, min = 1, max = 50),
+      numericInput("pca_export_height_modal", "Height (inches):", value = if (!is.null(plot_settings$pca_export_height)) plot_settings$pca_export_height else 8, min = 1, max = 50),
+      numericInput("pca_export_dpi", "DPI (PNG only):", value = 300, min = 72, max = 1200),
+      div(
+        class = "alert alert-info mt-3",
+        "Note: Exporting relies on generating a static ggplot rendering of your analysis."
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        downloadButton("execute_pca_export", "Download Plot", class = "btn-primary")
+      ),
+      easyClose = TRUE
+    ))
+  })
+
+  output$execute_pca_export <- downloadHandler(
+    filename = function() {
+      paste0("RNAcross_PCA_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", input$pca_export_format)
+    },
+    content = function(file) {
+      req(plot_state$pca_data)
+      
+      dark_mode <- is_dark()
+      
+      current_settings <- reactiveValuesToList(plot_settings)
+      current_settings$pca_viz_mode <- "publication"
+      
+      if (plot_state$pca_data$type == "single") {
+        p <- create_pca_plot(
+          expression_matrix = plot_state$pca_data$expression_matrix,
+          sample_info = plot_state$pca_data$sample_info,
+          is_dark_mode = dark_mode,
+          plot_settings = current_settings
+        )
+      } else {
+        p <- create_multi_species_pca(
+          get_species_data = get_species_data,
+          is_dark_mode = dark_mode,
+          aggregation_method = plot_state$pca_data$aggregation_method,
+          species_config = current_species_config(),
+          all_species_data_obj = get_all_species_data(),
+          transform_type = current_settings$global_transform,
+          plot_settings = current_settings
+        )
+      }
+      
+      req(p)
+      
+      if (inherits(p, "ggplot")) {
+        ggplot2::ggsave(
+          filename = file, 
+          plot = p, 
+          device = input$pca_export_format, 
+          width = input$pca_export_width_modal, 
+          height = input$pca_export_height_modal, 
+          dpi = input$pca_export_dpi,
+          units = "in",
+          bg = if (dark_mode) "#2c3034" else "white"
+        )
+      }
+    }
+  )
 
 
   # Theme toggle
@@ -1239,9 +1340,13 @@ server <- function(input, output, session) {
                   choices = c(
                     "Log2FC from baseline" = "log2fc",
                     "Z-score (by gene)" = "zscore",
+                    "Z-score (baseline subtracted)" = "zscore_minus_t0",
                     "Centered log2CPM" = "centered"
                   ),
                   selected = isolate(plot_settings$data_transform %||% "log2fc")
+                ),
+                checkboxInput("settings_show_t0", "Show t0 (baseline) timepoint",
+                  value = isolate(plot_settings$show_t0 %||% TRUE)
                 ),
                 selectInput("settings_time_axis", "Time Axis:",
                   choices = c(
@@ -1332,10 +1437,15 @@ server <- function(input, output, session) {
             ),
             selectInput("settings_pca_shape", "Shape represents:",
               choices = c(
-                "Species" = "species", "Condition" = "condition",
+                "Species" = "species", "Condition" = "condition", "Replicate" = "replicate",
                 "None" = "none"
               ),
               selected = isolate(plot_settings$encoding_pca_shape)
+            ),
+            radioButtons("settings_pca_collapse_reps", "Collapse Biological Replicates:",
+              choices = c("None" = "none", "Mean" = "mean", "Median" = "median"),
+              selected = isolate(plot_settings$pca_collapse_reps %||% "none"),
+              inline = TRUE
             ),
             hr(),
             h5("Appearance"),
@@ -1352,6 +1462,37 @@ server <- function(input, output, session) {
             ),
             checkboxInput("settings_pca_loadings", "Show gene loadings",
               value = isolate(plot_settings$pca_show_loadings)
+            ),
+            hr(),
+            h5("Publication Settings"),
+            radioButtons("settings_pca_viz_mode", "Visualization Mode:",
+              choices = c(
+                "Interactive (Plotly)" = "interactive",
+                "Publication (Static)" = "publication"
+              ),
+              selected = isolate(plot_settings$pca_viz_mode %||% "interactive"),
+              inline = TRUE
+            ),
+            conditionalPanel(
+              condition = "input.settings_pca_viz_mode == 'publication'",
+              wellPanel(
+                style = "background-color: #f8f9fa; padding: 10px;",
+                checkboxInput("settings_pca_trajectories", "Show temporal trajectories (arrows)",
+                  value = isolate(plot_settings$pca_trajectories %||% FALSE)
+                ),
+                checkboxInput("settings_pca_labels", "Show timepoint labels",
+                  value = isolate(plot_settings$pca_labels %||% FALSE)
+                ),
+                h6("Export Dimensions (inches)"),
+                fluidRow(
+                  column(6, numericInput("settings_pca_export_width", "Width:",
+                    value = isolate(plot_settings$pca_export_width %||% 10)
+                  )),
+                  column(6, numericInput("settings_pca_export_height", "Height:",
+                    value = isolate(plot_settings$pca_export_height %||% 8)
+                  ))
+                )
+              )
             )
           )
         ),
@@ -1440,17 +1581,19 @@ server <- function(input, output, session) {
   # Gene Color Pickers Implementation
   output$gene_color_pickers <- renderUI({
     req(gene_group_state$ready, gene_group_state$data)
-    
+
     # Extract unique genes
     if (isTRUE(gene_group_state$is_multi_species)) {
       genes <- unique(gene_group_state$data$GeneLabel)
     } else {
       genes <- unique(gene_group_state$data$Gene)
     }
-    
-    if (length(genes) == 0) return(NULL)
+
+    if (length(genes) == 0) {
+      return(NULL)
+    }
     genes <- stringr::str_sort(genes, numeric = TRUE)
-    
+
     # Isolate settings readings to prevent re-render loop when picking colors
     isolate({
       # Get current colors or generate defaults
@@ -1458,11 +1601,11 @@ server <- function(input, output, session) {
       if (is.null(current_colors)) {
         current_colors <- list()
       }
-      
+
       # Generate default if missing
       defaults <- get_palette_colors(plot_settings$gene_palette %||% "Set2", length(genes))
       names(defaults) <- genes
-      
+
       updated_colors <- current_colors
       changed <- FALSE
       for (g in genes) {
@@ -1474,13 +1617,13 @@ server <- function(input, output, session) {
       if (changed) {
         plot_settings$gene_colors <- updated_colors
       }
-      
+
       # Create pickers
       picker_list <- lapply(genes, function(g) {
         id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
         input_id <- paste0("gene_color_", id_suffix)
         col <- updated_colors[[g]]
-        
+
         div(
           style = "display: inline-block; margin: 5px; width: 150px;",
           colourpicker::colourInput(
@@ -1491,7 +1634,7 @@ server <- function(input, output, session) {
           )
         )
       })
-      
+
       do.call(tagList, picker_list)
     })
   })
@@ -1499,34 +1642,35 @@ server <- function(input, output, session) {
   # Update gene colors when palette changes
   observeEvent(input$settings_gene_palette, {
     req(gene_group_state$ready, gene_group_state$data)
-    
+
     plot_settings$gene_palette <- input$settings_gene_palette
     plot_settings$updating_colors_from_palette <- TRUE
-    
+
     if (isTRUE(gene_group_state$is_multi_species)) {
       genes <- unique(gene_group_state$data$GeneLabel)
     } else {
       genes <- unique(gene_group_state$data$Gene)
     }
-    if (length(genes) == 0) return()
+    if (length(genes) == 0) {
+      return()
+    }
     genes <- stringr::str_sort(genes, numeric = TRUE)
-    
+
     new_colors <- get_palette_colors(input$settings_gene_palette, length(genes))
     names(new_colors) <- genes
     as_list <- as.list(new_colors)
     plot_settings$gene_colors <- as_list
-    
+
     for (g in genes) {
       id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
       input_id <- paste0("gene_color_", id_suffix)
       colourpicker::updateColourInput(session, input_id, value = as_list[[g]])
     }
-    
+
     later::later(function() {
       plot_settings$updating_colors_from_palette <- FALSE
     }, delay = 0.3)
   })
-
 
 
   # update species colors when palette changes - regenerates all colors from palette
@@ -1561,7 +1705,6 @@ server <- function(input, output, session) {
   })
 
 
-
   observeEvent(input$settings_heatmap_palette, {
     plot_settings$heatmap_palette <- input$settings_heatmap_palette
   })
@@ -1594,6 +1737,14 @@ server <- function(input, output, session) {
     plot_settings$encoding_pca_color <- input$settings_pca_color
   })
 
+  observeEvent(input$settings_pca_shape, {
+    plot_settings$encoding_pca_shape <- input$settings_pca_shape
+  })
+
+  observeEvent(input$settings_pca_collapse_reps, {
+    plot_settings$pca_collapse_reps <- input$settings_pca_collapse_reps
+  })
+
   observeEvent(input$settings_min_scale, {
     plot_settings$min_scale <- input$settings_min_scale
   })
@@ -1617,6 +1768,26 @@ server <- function(input, output, session) {
 
   observeEvent(input$settings_pca_loadings, {
     plot_settings$pca_show_loadings <- input$settings_pca_loadings
+  })
+
+  observeEvent(input$settings_pca_viz_mode, {
+    plot_settings$pca_viz_mode <- input$settings_pca_viz_mode
+  })
+  
+  observeEvent(input$settings_pca_trajectories, {
+    plot_settings$pca_trajectories <- input$settings_pca_trajectories
+  })
+  
+  observeEvent(input$settings_pca_labels, {
+    plot_settings$pca_labels <- input$settings_pca_labels
+  })
+  
+  observeEvent(input$settings_pca_export_width, {
+    plot_settings$pca_export_width <- input$settings_pca_export_width
+  })
+  
+  observeEvent(input$settings_pca_export_height, {
+    plot_settings$pca_export_height <- input$settings_pca_export_height
   })
 
   observeEvent(input$settings_export_format, {
@@ -3262,60 +3433,68 @@ server <- function(input, output, session) {
     params = list(),
     is_multi_species = FALSE
   )
-  
+
   # Observer manager for dynamic gene color inputs (prevents slowness/cascading)
   gene_color_obs_manager <- reactiveValues(observers = list())
-  
+
   # Efficiently manage gene color observers
   observeEvent(gene_group_state$data, {
     # Clean up old observers
     lapply(gene_color_obs_manager$observers, function(o) o$destroy())
     gene_color_obs_manager$observers <- list()
-    
+
     req(gene_group_state$ready)
-    
+
     # Get unique genes
     if (isTRUE(gene_group_state$is_multi_species)) {
       genes <- unique(gene_group_state$data$GeneLabel)
     } else {
       genes <- unique(gene_group_state$data$Gene)
     }
-    
-    if (length(genes) == 0) return()
-    
+
+    if (length(genes) == 0) {
+      return()
+    }
+
     # create new observers
     gene_color_obs_manager$observers <- lapply(genes, function(g) {
       id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
       input_id <- paste0("gene_color_", id_suffix)
-      
-      observeEvent(input[[input_id]], {
-        val <- input[[input_id]]
-        if (!is.null(val)) {
-           plot_settings$gene_colors[[g]] <- val
-        }
-      }, ignoreInit = TRUE)
+
+      observeEvent(input[[input_id]],
+        {
+          val <- input[[input_id]]
+          if (!is.null(val)) {
+            plot_settings$gene_colors[[g]] <- val
+          }
+        },
+        ignoreInit = TRUE
+      )
     })
   })
 
   # Dynamic container for visualization (Publication Mode support)
   # Dynamic container for visualization (Publication Mode support)
-  
+
   # AUTO-SWITCH LOGIC:
   # When user changes "Visualization Type" in sidebar (Line/Bar/Heatmap),
   # they expect to see that interactive plot.
   # If we are currently stuck in "Publication Mode", reset it to Interactive.
-  observeEvent(input$group_viz_type, {
-    req(input$group_viz_type)
-    current_mode <- isolate(plot_settings$viz_mode)
-    if (!is.null(current_mode) && current_mode == "publication") {
-      # Show notification to explain why it switched
-      showNotification("Switched to Interactive Mode", type = "message", duration = 2)
-      
-      # Reset state
-      plot_settings$viz_mode <- "interactive"
-      updateRadioButtons(session, "settings_viz_mode", selected = "interactive")
-    }
-  }, ignoreInit = TRUE)
+  observeEvent(input$group_viz_type,
+    {
+      req(input$group_viz_type)
+      current_mode <- isolate(plot_settings$viz_mode)
+      if (!is.null(current_mode) && current_mode == "publication") {
+        # Show notification to explain why it switched
+        showNotification("Switched to Interactive Mode", type = "message", duration = 2)
+
+        # Reset state
+        plot_settings$viz_mode <- "interactive"
+        updateRadioButtons(session, "settings_viz_mode", selected = "interactive")
+      }
+    },
+    ignoreInit = TRUE
+  )
 
   # Sync settings_viz_mode from modal to persistent storage
   observeEvent(input$settings_viz_mode, {
@@ -4107,6 +4286,7 @@ server <- function(input, output, session) {
     transform <- input$settings_data_transform
     time_axis <- input$settings_time_axis
     row_order <- input$settings_row_ordering
+    show_t0 <- if (!is.null(input$settings_show_t0)) input$settings_show_t0 else TRUE
     # ...
 
     # 3. Create Heatmaps List
@@ -4232,7 +4412,8 @@ server <- function(input, output, session) {
         gene_order = all_genes,
         transform_type = transform,
         time_axis_type = time_axis,
-        allowed_timepoints = allowed_timepoints
+        allowed_timepoints = allowed_timepoints,
+        show_t0 = show_t0
       )
 
       # Create Heatmap
@@ -4337,6 +4518,7 @@ server <- function(input, output, session) {
 
         transform <- input$settings_data_transform
         time_axis <- input$settings_time_axis
+        show_t0 <- if (!is.null(input$settings_show_t0)) input$settings_show_t0 else TRUE
         ht_list <- list()
         config <- current_species_config()
         species_order <- c("sc", "cg", "ca", "kl")
@@ -4356,7 +4538,8 @@ server <- function(input, output, session) {
             gene_order = all_genes,
             transform_type = transform,
             time_axis_type = time_axis,
-            allowed_timepoints = allowed_timepoints
+            allowed_timepoints = allowed_timepoints,
+            show_t0 = show_t0
           )
 
           ht <- make_publication_heatmap(
@@ -4415,7 +4598,8 @@ server <- function(input, output, session) {
             species_code = sp,
             gene_order = all_genes,
             transform_type = transform,
-            time_axis_type = time_axis
+            time_axis_type = time_axis,
+            show_t0 = show_t0
           )
 
           ht <- make_publication_heatmap(

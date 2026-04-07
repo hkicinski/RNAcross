@@ -643,9 +643,26 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
   pca_data <- merge(pca_data, sample_info, by = "Sample", all.x = TRUE)
   pca_data$Timepoint <- factor(pca_data$Timepoint, levels = TIME_POINTS)
 
+  pca_collapse <- if (!is.null(plot_settings) && length(plot_settings$pca_collapse_reps) > 0) plot_settings$pca_collapse_reps else "none"
+  if (pca_collapse %in% c("mean", "median") && "Replicate" %in% names(pca_data)) {
+    agg_func <- if (pca_collapse == "mean") mean else median
+    group_cols <- intersect(names(pca_data), c("Timepoint", "Condition"))
+    pca_data <- pca_data %>%
+      dplyr::group_by(dplyr::across(dplyr::all_of(group_cols))) %>%
+      dplyr::summarize(
+        PC1 = agg_func(PC1),
+        PC2 = agg_func(PC2),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        Sample = paste(Timepoint, "Collapsed", sep="_"),
+        Replicate = "Collapsed"
+      )
+  }
+
   # get settings with defaults
-  point_size <- if (!is.null(plot_settings$pca_point_size)) plot_settings$pca_point_size else 3
-  point_alpha <- if (!is.null(plot_settings$pca_alpha)) plot_settings$pca_alpha else 0.8
+  point_size <- if (length(plot_settings$pca_point_size) > 0) plot_settings$pca_point_size else 3
+  point_alpha <- if (length(plot_settings$pca_alpha) > 0) plot_settings$pca_alpha else 0.8
 
   plot_bg_color <- if (is_dark_mode) "#2c3034" else "white"
   text_color <- if (is_dark_mode) "white" else "black"
@@ -673,6 +690,60 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
       legend.text = element_text(color = text_color),
       legend.title = element_text(color = text_color)
     )
+
+  if (!is.null(plot_settings) && isTRUE(plot_settings$pca_viz_mode == "publication")) {
+    pca_data <- pca_data[order(as.numeric(pca_data$Timepoint)), ]
+    
+    if (isTRUE(plot_settings$pca_trajectories)) {
+      path_data <- pca_data %>%
+        dplyr::group_by(Timepoint) %>%
+        dplyr::summarize(
+          PC1 = mean(PC1, na.rm = TRUE),
+          PC2 = mean(PC2, na.rm = TRUE),
+          .groups = "drop"
+        ) %>%
+        dplyr::arrange(as.numeric(Timepoint))
+        
+      p <- p + geom_path(
+        data = path_data,
+        aes(x = PC1, y = PC2, group = 1),
+        arrow = arrow(length = unit(0.15, "inches"), type = "closed"),
+        alpha = 0.7,
+        linewidth = 0.8
+      )
+    }
+
+    if (isTRUE(plot_settings$pca_labels)) {
+      pca_data$pub_label <- ifelse(is.na(as.numeric(pca_data$Timepoint)), 
+                                   as.character(pca_data$Timepoint), 
+                                   paste0("T", as.numeric(pca_data$Timepoint)))
+      
+      label_data <- pca_data %>%
+        dplyr::group_by(Timepoint, pub_label) %>%
+        dplyr::summarize(
+          PC1 = mean(PC1, na.rm = TRUE),
+          PC2 = mean(PC2, na.rm = TRUE),
+          .groups = "drop"
+        )
+        
+      p <- p + ggrepel::geom_text_repel(
+        data = label_data,
+        aes(x = PC1, y = PC2, label = pub_label),
+        size = 3.5,
+        bg.color = "white",
+        bg.r = 0.15,
+        show.legend = FALSE
+      )
+    }
+
+    p <- p +
+      ggprism::theme_prism(base_size = 14) +
+      theme(
+        legend.position = "right",
+        legend.title = element_text(face = "bold")
+      )
+    return(p)
+  }
 
   plotly::ggplotly(p, tooltip = c("Sample", "Timepoint")) %>%
     layout(
@@ -702,6 +773,9 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
 create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, aggregation_method = "eigengene",
                                      species_config = DEFAULT_SPECIES_CONFIG, all_species_data_obj = NULL,
                                      transform_type = "lcpm", debug = FALSE, plot_settings = NULL) {
+  if (length(aggregation_method) == 0) aggregation_method <- "eigengene"
+  if (length(transform_type) == 0) transform_type <- "lcpm"
+  
   method_label <- switch(aggregation_method,
     "single_only" = "SINGLE-COPY GENES ONLY",
     "mean" = "MEAN AGGREGATION",
@@ -994,15 +1068,32 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
       plot_data <- merge(plot_data, sample_metadata, by = "Sample")
       plot_data$Timepoint <- factor(plot_data$Timepoint, levels = TIME_POINTS)
 
+      pca_collapse <- if (!is.null(plot_settings) && length(plot_settings$pca_collapse_reps) > 0) plot_settings$pca_collapse_reps else "none"
+      if (pca_collapse %in% c("mean", "median") && "Replicate" %in% names(plot_data)) {
+        agg_func <- if (pca_collapse == "mean") mean else median
+        group_cols <- intersect(names(plot_data), c("Species", "Timepoint", "Condition"))
+        plot_data <- plot_data %>%
+          dplyr::group_by(dplyr::across(dplyr::all_of(group_cols))) %>%
+          dplyr::summarize(
+            PC1 = agg_func(PC1),
+            PC2 = agg_func(PC2),
+            .groups = "drop"
+          ) %>%
+          dplyr::mutate(
+            Sample = paste(Species, Timepoint, sep = "_"),
+            Replicate = "Collapsed"
+          )
+      }
+
       plot_bg_color <- if (is_dark_mode) "#2c3034" else "white"
       text_color <- if (is_dark_mode) "white" else "black"
       grid_color <- if (is_dark_mode) "gray30" else "gray90"
 
       # get settings with defaults
-      point_size <- if (!is.null(plot_settings$pca_point_size)) plot_settings$pca_point_size else 4
-      point_alpha <- if (!is.null(plot_settings$pca_alpha)) plot_settings$pca_alpha else 0.8
-      encoding_color <- if (!is.null(plot_settings$encoding_pca_color)) plot_settings$encoding_pca_color else "timepoint"
-      encoding_shape <- if (!is.null(plot_settings$encoding_pca_shape)) plot_settings$encoding_pca_shape else "species"
+      point_size <- if (length(plot_settings$pca_point_size) > 0) plot_settings$pca_point_size else 4
+      point_alpha <- if (length(plot_settings$pca_alpha) > 0) plot_settings$pca_alpha else 0.8
+      encoding_color <- if (length(plot_settings$encoding_pca_color) > 0) plot_settings$encoding_pca_color else "timepoint"
+      encoding_shape <- if (length(plot_settings$encoding_pca_shape) > 0) plot_settings$encoding_pca_shape else "species"
       species_colors <- if (!is.null(plot_settings$species_colors)) plot_settings$species_colors else list()
       species_shapes <- if (!is.null(plot_settings$species_shapes)) plot_settings$species_shapes else list()
 
@@ -1031,6 +1122,11 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
           geom_point(size = point_size, alpha = point_alpha) +
           scale_color_manual(values = color_vec) +
           scale_shape_manual(values = shape_vec)
+      } else if (encoding_color == "species" && encoding_shape == "replicate") {
+        p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Species, shape = factor(Replicate), text = hover_text)) +
+          geom_point(size = point_size, alpha = point_alpha) +
+          scale_color_manual(values = color_vec) +
+          labs(shape = "Replicate")
       } else if (encoding_color == "species" && encoding_shape == "none") {
         p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Species, text = hover_text)) +
           geom_point(size = point_size, alpha = point_alpha) +
@@ -1040,6 +1136,11 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
           geom_point(size = point_size, alpha = point_alpha) +
           scale_color_viridis(discrete = TRUE, option = "viridis") +
           scale_shape_manual(values = shape_vec)
+      } else if (encoding_color == "timepoint" && encoding_shape == "replicate") {
+        p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Timepoint, shape = factor(Replicate), text = hover_text)) +
+          geom_point(size = point_size, alpha = point_alpha) +
+          scale_color_viridis(discrete = TRUE, option = "viridis") +
+          labs(shape = "Replicate")
       } else {
         p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = Timepoint, text = hover_text)) +
           geom_point(size = point_size, alpha = point_alpha) +
@@ -1095,6 +1196,119 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
       )
 
       attr(p, "matrices_data") <- matrices_data
+
+      if (!is.null(plot_settings) && isTRUE(plot_settings$pca_viz_mode == "publication")) {
+        plot_data <- plot_data[order(plot_data$Species, as.numeric(plot_data$Timepoint)), ]
+        
+        # Hardcode natural species colors per user request, fallback for unknown species
+        base_colors <- c(
+          "S. cerevisiae" = "blue",
+          "C. glabrata" = "red",
+          "C. albicans" = "#74AC4C",
+          "K. lactis" = "#F8C434"
+        )
+        for (sp in unique(plot_data$Species)) {
+          if (!(sp %in% names(base_colors))) base_colors[sp] <- color_vec[sp]
+        }
+        
+        # Parse text labels explicitly mapping 'T1', 'T2'
+        mapped_num <- as.numeric(plot_data$Timepoint)
+        plot_data$pub_label <- ifelse(is.na(mapped_num), as.character(plot_data$Timepoint), paste0("T", mapped_num))
+        
+        # Build interaction colors for progression (HCL/Lab Linear mapping equivalent)
+        plot_data$SpeciesTime <- paste(plot_data$Species, plot_data$Timepoint, sep = "_")
+        interaction_colors <- c()
+        for (sp in unique(plot_data$Species)) {
+           sp_data <- plot_data[plot_data$Species == sp, ]
+           t_levels_sp <- sort(unique(as.numeric(sp_data$Timepoint)))
+           num_t <- length(t_levels_sp)
+           if (num_t < 1) num_t <- 1
+           
+           # Generate color progression ignoring early ultra-light tones for visibility
+           pal <- colorRampPalette(c("white", base_colors[sp]), space = "Lab")(num_t + 2)
+           sp_colors <- pal[3:(num_t + 2)]
+           
+           for (i in seq_along(t_levels_sp)) {
+             t_str <- as.character(unique(sp_data$Timepoint[as.numeric(sp_data$Timepoint) == t_levels_sp[i]]))
+             interaction_colors[paste(sp, t_str, sep = "_")] <- sp_colors[i]
+           }
+        }
+        
+        # Render Publication Base Figure
+        p <- ggplot(plot_data, aes(x = PC1, y = PC2))
+        
+        if ("Replicate" %in% names(plot_data) && pca_collapse == "none") {
+           p <- p + geom_point(aes(color = SpeciesTime, shape = factor(Replicate)), size = point_size) +
+                scale_shape_manual(values = c(1, 16, 2, 17, 0, 15, 3, 4, 8)) +
+                labs(shape = "Replicate")
+        } else {
+           p <- p + geom_point(aes(color = SpeciesTime), shape = 16, size = point_size)
+        }
+        
+        # Turn off native massive interaction legend mappings
+        p <- p + scale_color_manual(values = interaction_colors, guide = "none") 
+        
+        # Apply dummy mapping cleanly establishing a Species Legend tied to raw Natural Colors
+        p <- p + geom_point(data = plot_data, aes(x = NA, y = NA, fill = Species), shape = 21, size = 3, color = "transparent", na.rm = TRUE) +
+             scale_fill_manual(values = base_colors, name = "Species")
+             
+        if (isTRUE(plot_settings$pca_trajectories)) {
+          path_data <- plot_data %>%
+            dplyr::group_by(Species, Timepoint, SpeciesTime) %>%
+            dplyr::summarize(
+              PC1 = mean(PC1, na.rm = TRUE),
+              PC2 = mean(PC2, na.rm = TRUE),
+              .groups = "drop"
+            ) %>%
+            dplyr::arrange(Species, as.numeric(Timepoint))
+            
+          p <- p + geom_path(
+            data = path_data,
+            aes(x = PC1, y = PC2, group = Species, color = SpeciesTime),
+            arrow = arrow(length = unit(0.15, "inches"), type = "closed"),
+            alpha = 0.7,
+            linewidth = 0.8,
+            show.legend = FALSE
+          )
+        }
+
+        if (isTRUE(plot_settings$pca_labels)) {
+          label_data <- plot_data %>%
+            dplyr::group_by(Species, SpeciesTime, pub_label) %>%
+            dplyr::summarize(
+              PC1 = mean(PC1, na.rm = TRUE),
+              PC2 = mean(PC2, na.rm = TRUE),
+              .groups = "drop"
+            )
+            
+          p <- p + ggrepel::geom_text_repel(
+            data = label_data,
+            aes(x = PC1, y = PC2, label = pub_label, color = SpeciesTime),
+            size = 3.5,
+            bg.color = "white",
+            bg.r = 0.15,
+            show.legend = FALSE
+          )
+        }
+
+        p <- p +
+          labs(
+            x = sprintf("PC1 (Variance Explained: %.1f%%)", var_explained[1]),
+            y = sprintf("PC2 (Variance Explained: %.1f%%)", var_explained[2]),
+            title = paste("Multi-Species PCA: Temporal Trajectories -", method_label),
+            subtitle = paste("Showing progression over timepoints for", length(unique(plot_data$Species)), "species")
+          ) +
+          ggprism::theme_prism(base_size = 14) +
+          theme(
+            legend.position = "right",
+            legend.title = element_text(face = "bold")
+          ) +
+          (if (encoding_color == "species" || encoding_shape == "species") theme(legend.text = element_text(face = "italic")) else NULL)
+
+        attr(p, "matrices_data") <- matrices_data
+        debug_print("PCA static plot created successfully")
+        return(p)
+      }
 
       plot <- plotly::ggplotly(p, tooltip = "text") %>%
         layout(

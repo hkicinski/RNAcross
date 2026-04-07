@@ -791,7 +791,8 @@ prepare_heatmap_matrix_publication <- function(expression_data, species_code, ge
                                                transform_type = "centered",
                                                time_axis_type = "standardized",
                                                baseline_tp = "0min",
-                                               allowed_timepoints = NULL) {
+                                               allowed_timepoints = NULL,
+                                               show_t0 = TRUE) {
   # Filter for species
   sp_data <- if ("SpeciesCode" %in% names(expression_data)) {
     expression_data %>% filter(SpeciesCode == species_code)
@@ -856,20 +857,31 @@ prepare_heatmap_matrix_publication <- function(expression_data, species_code, ge
   }
 
   # Apply Transformations
-  if (transform_type == "log2fc") {
-    # Find baseline columns
-    # Assuming baseline is T01 or 0min
-    baseline_cols <- grep("0min|T01", colnames(mat_aligned))
-    if (length(baseline_cols) == 0) baseline_cols <- 1 # Fallback to first
+  baseline_cols <- grep("^0min$|^T01$|^0h$", colnames(mat_aligned), ignore.case = TRUE)
+  if (length(baseline_cols) == 0) baseline_cols <- 1 # Fallback to first
 
+  if (transform_type == "log2fc") {
     mat_aligned <- compute_log2fc(mat_aligned, baseline_cols)
-  } else if (transform_type == "zscore") {
+  } else if (transform_type == "zscore" || transform_type == "zscore_minus_t0") {
     # Row-wise Z-score
-    mat_aligned <- t(scale(t(mat_aligned)))
+    mat_scaled <- t(scale(t(mat_aligned)))
+    # Replace NA/NaN with 0 if variance was 0
+    mat_scaled[!is.finite(mat_scaled)] <- 0
+
+    if (transform_type == "zscore_minus_t0") {
+      mat_aligned <- compute_log2fc(mat_scaled, baseline_cols)
+    } else {
+      mat_aligned <- mat_scaled
+    }
   } else if (transform_type == "centered") {
     # Mean center rows
     row_means <- rowMeans(mat_aligned, na.rm = TRUE)
     mat_aligned <- mat_aligned - row_means
+  }
+
+  if (!show_t0) {
+    # Remove baseline columns
+    mat_aligned <- mat_aligned[, -baseline_cols, drop = FALSE]
   }
 
   return(mat_aligned)
@@ -1256,12 +1268,12 @@ make_publication_heatmap <- function(mat, species_prefix, species_name, color_fu
     }
   }
 
-  # Format row labels
-  row_labels <- paste0(species_prefix, rownames(mat))
+  # Format row labels (shortened to gene name only)
+  row_labels <- rownames(mat)
 
   # Calculate Height
   # If raster/compact, use fixed null to let it fill available space (or relative)
-  # If full (not raster), we used to calculate dynamic height. 
+  # If full (not raster), we used to calculate dynamic height.
   # But user wants full veritcal usage.
   hm_height <- NULL
 
@@ -1388,7 +1400,6 @@ draw_2x2_heatmap <- function(ht_list, legend) {
     }
     popViewport()
     popViewport()
-
   } else {
     # 2x2 Grid Layout
     pushViewport(viewport(layout = grid.layout(2, 3, widths = unit(c(1, 1, 0.5), "null"))))

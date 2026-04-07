@@ -1397,7 +1397,12 @@ ui <- page_navbar(
         width = 9,
         div(
           class = "results-panel",
-          plotlyOutput("pca_plot", height = "500px"),
+          div(
+            class = "d-flex justify-content-between align-items-center mb-3",
+            h4("PCA Visualization", style = "margin: 0;"),
+            actionButton("show_pca_export_modal", "Export Plot", icon = icon("download"), class = "btn btn-outline-primary btn-sm")
+          ),
+          uiOutput("pca_plot_container", style = "min-height: 500px;"),
           verbatimTextOutput("pca_debug_output")
         )
       )
