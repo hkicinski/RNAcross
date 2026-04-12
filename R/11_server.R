@@ -1081,71 +1081,67 @@ server <- function(input, output, session) {
 
   # ----- PCA Export Modal -----
   observeEvent(input$show_pca_export_modal, {
-    showModal(modalDialog(
-      title = "Export PCA Plot",
-      selectInput("pca_export_format", "Format:", choices = c("pdf" = "pdf", "png" = "png", "svg" = "svg")),
-      numericInput("pca_export_width_modal", "Width (inches):", value = if (!is.null(plot_settings$pca_export_width)) plot_settings$pca_export_width else 10, min = 1, max = 50),
-      numericInput("pca_export_height_modal", "Height (inches):", value = if (!is.null(plot_settings$pca_export_height)) plot_settings$pca_export_height else 8, min = 1, max = 50),
-      numericInput("pca_export_dpi", "DPI (PNG only):", value = 300, min = 72, max = 1200),
-      div(
-        class = "alert alert-info mt-3",
-        "Note: Exporting relies on generating a static ggplot rendering of your analysis."
-      ),
-      footer = tagList(
-        modalButton("Cancel"),
-        downloadButton("execute_pca_export", "Download Plot", class = "btn-primary")
-      ),
-      easyClose = TRUE
-    ))
+    show_plot_export_modal("execute_pca_export", "Export PCA Plot")
   })
 
-  output$execute_pca_export <- downloadHandler(
-    filename = function() {
-      paste0("RNAcross_PCA_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", input$pca_export_format)
-    },
-    content = function(file) {
-      req(plot_state$pca_data)
-      
-      dark_mode <- is_dark()
-      
-      current_settings <- reactiveValuesToList(plot_settings)
-      current_settings$pca_viz_mode <- "publication"
-      
-      if (plot_state$pca_data$type == "single") {
-        p <- create_pca_plot(
-          expression_matrix = plot_state$pca_data$expression_matrix,
-          sample_info = plot_state$pca_data$sample_info,
-          is_dark_mode = dark_mode,
-          plot_settings = current_settings
-        )
-      } else {
-        p <- create_multi_species_pca(
-          get_species_data = get_species_data,
-          is_dark_mode = dark_mode,
-          aggregation_method = plot_state$pca_data$aggregation_method,
-          species_config = current_species_config(),
-          all_species_data_obj = get_all_species_data(),
-          transform_type = current_settings$global_transform,
-          plot_settings = current_settings
-        )
-      }
-      
-      req(p)
-      
-      if (inherits(p, "ggplot")) {
-        ggplot2::ggsave(
-          filename = file, 
-          plot = p, 
-          device = input$pca_export_format, 
-          width = input$pca_export_width_modal, 
-          height = input$pca_export_height_modal, 
-          dpi = input$pca_export_dpi,
-          units = "in",
-          bg = if (dark_mode) "#2c3034" else "white"
-        )
-      }
+  observeEvent(input$execute_pca_export_confirm, {
+    req(plot_state$pca_data)
+
+    fmt <- input$execute_pca_export_format
+    w <- input$execute_pca_export_width
+    h <- input$execute_pca_export_height
+    dpi_val <- input$execute_pca_export_dpi
+    if (is.null(fmt)) fmt <- "png"
+    if (is.null(w)) w <- 10
+    if (is.null(h)) h <- 8
+    if (is.null(dpi_val)) dpi_val <- 300
+
+    dark_mode <- is_dark()
+    current_settings <- reactiveValuesToList(plot_settings)
+    current_settings$pca_viz_mode <- "publication"
+
+    p <- if (plot_state$pca_data$type == "single") {
+      create_pca_plot(
+        expression_matrix = plot_state$pca_data$expression_matrix,
+        sample_info = plot_state$pca_data$sample_info,
+        is_dark_mode = dark_mode,
+        plot_settings = current_settings
+      )
+    } else {
+      create_multi_species_pca(
+        get_species_data = get_species_data,
+        is_dark_mode = dark_mode,
+        aggregation_method = plot_state$pca_data$aggregation_method,
+        species_config = current_species_config(),
+        all_species_data_obj = get_all_species_data(),
+        transform_type = current_settings$global_transform,
+        plot_settings = current_settings
+      )
     }
-  )
+
+    req(p)
+    if (inherits(p, "ggplot")) {
+      tmp <- tempfile(fileext = paste0(".", fmt))
+      ggplot2::ggsave(
+        filename = tmp, plot = p, device = fmt,
+        width = w, height = h, dpi = dpi_val,
+        units = "in", bg = if (dark_mode) "#2c3034" else "white"
+      )
+      raw <- readBin(tmp, "raw", file.size(tmp))
+      encoded <- jsonlite::base64_enc(raw)
+      mime <- switch(fmt,
+        png = "image/png", jpeg = "image/jpeg",
+        pdf = "application/pdf", svg = "image/svg+xml",
+        "application/octet-stream"
+      )
+      session$sendCustomMessage("download_base64", list(
+        data = encoded,
+        filename = paste0("RNAcross_PCA_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", fmt),
+        mime = mime
+      ))
+      removeModal()
+    }
+  })
 
 
   # Theme toggle
@@ -2510,32 +2506,52 @@ server <- function(input, output, session) {
         })
       }
 
-      # Download handler
-      if (!exists(obs_download_id, envir = session$userData)) {
-        output[[paste0(species_id, "_download")]] <- downloadHandler(
-          filename = function() {
-            paste0(SPECIES_CONFIG[[species_id]]$short, "_gene_expression_", Sys.Date(), ".png")
-          },
-          content = function(file) {
-            selected_gene <- input[[paste0(species_id, "_", species_id, "_selection")]]
-            if (!is.null(selected_gene) && selected_gene != "") {
-              species_data <- get_species_data(species_id)
-              config <- current_species_config()
-              p <- create_gene_plot(
-                lc = get_expression_matrix(species_id, plot_settings$global_transform, species_data),
-                gene = selected_gene,
-                sample_info = species_data$sample_info,
-                species_name = config[[species_id]]$short,
-                is_dark_mode = is_dark(),
-                species_colors = species_colors_dynamic(),
-                transform_type = plot_settings$global_transform,
-                plot_settings = reactiveValuesToList(plot_settings)
-              )
-              orca(p, file)
-            }
-          }
-        )
-        session$userData[[obs_download_id]] <- TRUE
+      # Export modal trigger
+      obs_modal_id <- paste0("obs_modal_", species_id)
+      if (!exists(obs_modal_id, envir = session$userData)) {
+        local({
+          local_sp <- species_id
+          observeEvent(input[[paste0(local_sp, "_export_btn")]], {
+            config <- current_species_config()
+            sp_label <- if (local_sp %in% names(config)) config[[local_sp]]$short else local_sp
+            show_plot_export_modal(
+              paste0(local_sp, "_download"), paste0("Export ", sp_label, " Plot"),
+              formats = c("PNG" = "png", "JPEG" = "jpeg", "SVG" = "svg")
+            )
+          })
+        })
+        session$userData[[obs_modal_id]] <- TRUE
+      }
+
+      # Export confirm handler (client-side plotly export)
+      obs_confirm_id <- paste0("obs_confirm_", species_id)
+      if (!exists(obs_confirm_id, envir = session$userData)) {
+        local({
+          local_sp <- species_id
+          observeEvent(input[[paste0(local_sp, "_download_confirm")]], {
+            fmt <- input[[paste0(local_sp, "_download_format")]]
+            w <- input[[paste0(local_sp, "_download_width")]]
+            h <- input[[paste0(local_sp, "_download_height")]]
+            dpi_val <- input[[paste0(local_sp, "_download_dpi")]]
+            if (is.null(fmt)) fmt <- "png"
+            if (is.null(w)) w <- 10
+            if (is.null(h)) h <- 8
+            if (is.null(dpi_val)) dpi_val <- 300
+
+            config <- current_species_config()
+            sp_short <- if (local_sp %in% names(config)) config[[local_sp]]$short else local_sp
+
+            session$sendCustomMessage("plotly_export", list(
+              plotId = paste0(local_sp, "_gene_plot"),
+              format = fmt,
+              width = round(w * dpi_val),
+              height = round(h * dpi_val),
+              filename = paste0(sp_short, "_gene_expression_", Sys.Date())
+            ))
+            removeModal()
+          })
+        })
+        session$userData[[obs_confirm_id]] <- TRUE
       }
     })
   })
@@ -2833,17 +2849,30 @@ server <- function(input, output, session) {
       config(displayModeBar = TRUE, modeBarButtons = list(list("zoom2d", "pan2d", "resetScale2d", "toImage")))
   })
 
-  # Download handler for combined plot
-  output$download_combined_plot <- downloadHandler(
-    filename = function() {
-      paste0("combined_expression_", Sys.Date(), ".png")
-    },
-    content = function(file) {
-      # Get current plot
-      p <- plotly::plotly_build(isolate(output$combined_gene_plot()))
-      plotly::export(p, file = file)
-    }
-  )
+  observeEvent(input$export_combined_plot_btn, {
+    show_plot_export_modal("download_combined_plot", "Export Combined Expression Plot",
+                           formats = c("PNG" = "png", "JPEG" = "jpeg", "SVG" = "svg"))
+  })
+
+  observeEvent(input$download_combined_plot_confirm, {
+    fmt <- input$download_combined_plot_format
+    w <- input$download_combined_plot_width
+    h <- input$download_combined_plot_height
+    dpi_val <- input$download_combined_plot_dpi
+    if (is.null(fmt)) fmt <- "png"
+    if (is.null(w)) w <- 10
+    if (is.null(h)) h <- 8
+    if (is.null(dpi_val)) dpi_val <- 300
+
+    session$sendCustomMessage("plotly_export", list(
+      plotId = "combined_gene_plot",
+      format = fmt,
+      width = round(w * dpi_val),
+      height = round(h * dpi_val),
+      filename = paste0("combined_expression_", Sys.Date())
+    ))
+    removeModal()
+  })
 
   # Store heatmap data for download
   ortholog_result <- reactiveVal(NULL)
@@ -2951,21 +2980,30 @@ server <- function(input, output, session) {
     ortholog_result()$table
   })
 
-  # Download handlers
-  output$download_ortholog_heatmap <- downloadHandler(
-    filename = function() {
-      paste("cross_species_heatmap_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".png", sep = "")
-    },
-    content = function(file) {
-      # make sure we have a result
-      req(ortholog_result())
-      result <- ortholog_result()
+  observeEvent(input$export_ortholog_heatmap_btn, {
+    show_plot_export_modal("download_ortholog_heatmap", "Export Cross-Species Heatmap",
+                           formats = c("PNG" = "png", "JPEG" = "jpeg", "SVG" = "svg"))
+  })
 
-      # save plot to file (using plotly export)
-      p <- result$plot
-      plotly::export(p, file = file)
-    }
-  )
+  observeEvent(input$download_ortholog_heatmap_confirm, {
+    fmt <- input$download_ortholog_heatmap_format
+    w <- input$download_ortholog_heatmap_width
+    h <- input$download_ortholog_heatmap_height
+    dpi_val <- input$download_ortholog_heatmap_dpi
+    if (is.null(fmt)) fmt <- "png"
+    if (is.null(w)) w <- 10
+    if (is.null(h)) h <- 8
+    if (is.null(dpi_val)) dpi_val <- 300
+
+    session$sendCustomMessage("plotly_export", list(
+      plotId = "ortholog_heatmap_plot",
+      format = fmt,
+      width = round(w * dpi_val),
+      height = round(h * dpi_val),
+      filename = paste0("cross_species_heatmap_", format(Sys.time(), "%Y%m%d_%H%M%S"))
+    ))
+    removeModal()
+  })
 
   output$download_ortholog_data <- downloadHandler(
     filename = function() {
@@ -4456,172 +4494,187 @@ server <- function(input, output, session) {
     draw_2x2_heatmap(ht_list, legend = legend)
   })
 
-  # Download handler for gene group plot
-  output$download_group_plot <- downloadHandler(
-    filename = function() {
-      mode <- input$settings_viz_mode
+  observeEvent(input$export_group_plot_btn, {
+    mode <- input$settings_viz_mode
+    if (!is.null(mode) && mode == "publication") {
+      show_plot_export_modal("download_group_plot", "Export Gene Group Plot")
+    } else {
+      show_plot_export_modal("download_group_plot", "Export Gene Group Plot",
+                             formats = c("PNG" = "png", "JPEG" = "jpeg", "SVG" = "svg"))
+    }
+  })
 
-      base <- if (input$enable_pathway_comparison) {
-        paste0("pathway_comparison_", input$pathway_value_type)
+  observeEvent(input$download_group_plot_confirm, {
+    fmt <- input$download_group_plot_format
+    modal_w <- input$download_group_plot_width
+    modal_h <- input$download_group_plot_height
+    dpi_val <- input$download_group_plot_dpi
+    if (is.null(fmt)) fmt <- "png"
+    if (is.null(modal_w)) modal_w <- 10
+    if (is.null(modal_h)) modal_h <- 8
+    if (is.null(dpi_val)) dpi_val <- 300
+
+    mode <- input$settings_viz_mode
+    if (is.null(mode)) mode <- "interactive"
+
+    base <- if (input$enable_pathway_comparison) {
+      paste0("pathway_comparison_", input$pathway_value_type)
+    } else {
+      paste0("gene_group_", input$group_viz_type)
+    }
+    if (mode == "publication") base <- paste0(base, "_publication")
+    out_filename <- paste0(base, "_", Sys.Date())
+
+    if (mode == "publication") {
+      req(gene_group_state$ready, gene_group_state$data)
+      plot_data <- gene_group_state$data
+
+      pub_mode <- input$settings_pub_mode
+      if (is.null(pub_mode)) pub_mode <- "full"
+      force_labels <- input$settings_download_labels
+      if (is.null(force_labels)) force_labels <- FALSE
+      is_compact <- pub_mode == "compact"
+
+      w <- modal_w
+      h <- modal_h
+      n_genes <- length(unique(plot_data$Gene))
+      rec_height <- (n_genes * 0.35) + 2
+      if (force_labels || !is_compact) h <- max(h, rec_height)
+
+      tmp <- tempfile(fileext = paste0(".", fmt))
+      if (fmt == "pdf") {
+        pdf(tmp, width = w, height = h)
+      } else if (fmt == "svg") {
+        svg(tmp, width = w, height = h)
+      } else if (fmt == "jpeg") {
+        jpeg(tmp, width = w, height = h, units = "in", res = dpi_val, quality = 95)
       } else {
-        paste0("gene_group_", input$group_viz_type)
+        png(tmp, width = w, height = h, units = "in", res = dpi_val)
       }
 
-      if (!is.null(mode) && mode == "publication") {
-        base <- paste0(base, "_publication")
+      # Rendering Logic params
+      show_rows <- force_labels || !is_compact
+      use_raster <- !show_rows
+
+      transform <- input$settings_data_transform
+      time_axis <- input$settings_time_axis
+      show_t0 <- if (!is.null(input$settings_show_t0)) input$settings_show_t0 else TRUE
+      ht_list <- list()
+      config <- current_species_config()
+      species_order <- c("sc", "cg", "ca", "kl")
+      all_genes <- unique(plot_data$Gene)
+
+      pal <- NULL
+
+      for (sp in species_order) {
+        mat <- prepare_heatmap_matrix_publication(
+          expression_data = plot_data,
+          species_code = sp,
+          gene_order = all_genes,
+          transform_type = transform,
+          time_axis_type = time_axis,
+          allowed_timepoints = allowed_timepoints,
+          show_t0 = show_t0
+        )
+
+        ht <- make_publication_heatmap(
+          mat = mat,
+          species_prefix = paste0(config[[sp]]$short, "-"),
+          species_name = config[[sp]]$name,
+          color_fun = color_fun,
+          row_annot = if (sp == species_order[4]) row_annot else NULL,
+          show_legend = FALSE,
+          show_row_names = show_rows,
+          category_colors = pal,
+          use_raster = use_raster
+        )
+        ht_list[[length(ht_list) + 1]] <- ht
       }
 
-      paste0(base, "_", Sys.Date(), ".png")
-    },
-    content = function(file) {
-      mode <- input$settings_viz_mode
-      if (is.null(mode)) mode <- "interactive"
-
-      if (mode == "publication") {
-        req(gene_group_state$ready, gene_group_state$data)
-        plot_data <- gene_group_state$data
-
-        # Setup device
-        # Determine Mode and Dimensions
-        pub_mode <- input$settings_pub_mode
-        if (is.null(pub_mode)) pub_mode <- "full"
-
-        force_labels <- input$settings_download_labels
-        if (is.null(force_labels)) force_labels <- FALSE
-
-        is_compact <- pub_mode == "compact"
-
-        # Dimensions Logic
-        w <- input$settings_export_width
-        if (is.null(w)) w <- 10
-
-        h <- input$settings_export_height
-        # Auto-calculate height if not manually set OR if forcing dynamic mode
-        # If user hasn't touched the height (default 10) OR we need to expand for labels:
-
-        n_genes <- length(unique(plot_data$Gene))
-        rec_height <- (n_genes * 0.35) + 2
-
-        if (force_labels || !is_compact) {
-          # Full Mode / Forced Labels: Use dynamic height
-          h <- max(h %||% 10, rec_height)
-        } else {
-          # Compact Mode (no force): Use fixed/input height
-          if (is.null(h)) h <- 10
-        }
-
-        png(file, width = w, height = h, units = "in", res = 300)
-
-        # Rendering Logic params
-        show_rows <- force_labels || !is_compact
-        use_raster <- !show_rows # Rasterize if compact/no-labels
-
-        transform <- input$settings_data_transform
-        time_axis <- input$settings_time_axis
-        show_t0 <- if (!is.null(input$settings_show_t0)) input$settings_show_t0 else TRUE
-        ht_list <- list()
-        config <- current_species_config()
-        species_order <- c("sc", "cg", "ca", "kl")
-        all_genes <- unique(plot_data$Gene)
-
-        # ... (rest of setup) ...
-
-        # Loop species (similar to renderPlot)
-        pal <- NULL
-        # ... (annotation setup) ...
-
-        for (sp in species_order) {
-          # ... (matrix prep) ...
-          mat <- prepare_heatmap_matrix_publication(
-            expression_data = plot_data,
-            species_code = sp,
-            gene_order = all_genes,
-            transform_type = transform,
-            time_axis_type = time_axis,
-            allowed_timepoints = allowed_timepoints,
-            show_t0 = show_t0
-          )
-
-          ht <- make_publication_heatmap(
-            mat = mat,
-            species_prefix = paste0(config[[sp]]$short, "-"),
-            species_name = config[[sp]]$name,
-            color_fun = color_fun,
-            row_annot = if (sp == species_order[4]) row_annot else NULL,
-            show_legend = FALSE,
-            show_row_names = show_rows,
-            category_colors = pal,
-            use_raster = use_raster
-          )
-          ht_list[[length(ht_list) + 1]] <- ht
-        }
-
-        # Process Annotations (Copy from renderer)
-        row_annot <- NULL
-        pal <- NULL
-        if (!is.null(gene_group_state$annotations)) {
-          df_anno <- gene_group_state$annotations
-          df_anno <- df_anno[df_anno$Gene %in% all_genes, ]
-          if (nrow(df_anno) > 0) {
-            cats <- unique(df_anno$Category)
-            n_cats <- length(cats)
-            if (n_cats > 0) {
-              if (n_cats <= 8) {
-                pal <- RColorBrewer::brewer.pal(max(3, n_cats), "Set2")[1:n_cats]
-              } else {
-                pal <- rainbow(n_cats)
-              }
-              names(pal) <- cats
-              anno_df_clean <- data.frame(Category = df_anno$Category)
-              rownames(anno_df_clean) <- df_anno$Gene
-              missing_genes <- setdiff(all_genes, rownames(anno_df_clean))
-              if (length(missing_genes) > 0) {
-                missing_df <- data.frame(Category = rep(NA, length(missing_genes)))
-                rownames(missing_df) <- missing_genes
-                anno_df_clean <- rbind(anno_df_clean, missing_df)
-              }
-              anno_df_clean <- anno_df_clean[all_genes, , drop = FALSE]
-              row_annot <- ComplexHeatmap::HeatmapAnnotation(
-                Category = anno_df_clean$Category,
-                col = list(Category = pal),
-                which = "row",
-                show_legend = TRUE,
-                annotation_name_side = "top"
-              )
+      # Process Annotations
+      row_annot <- NULL
+      pal <- NULL
+      if (!is.null(gene_group_state$annotations)) {
+        df_anno <- gene_group_state$annotations
+        df_anno <- df_anno[df_anno$Gene %in% all_genes, ]
+        if (nrow(df_anno) > 0) {
+          cats <- unique(df_anno$Category)
+          n_cats <- length(cats)
+          if (n_cats > 0) {
+            if (n_cats <= 8) {
+              pal <- RColorBrewer::brewer.pal(max(3, n_cats), "Set2")[1:n_cats]
+            } else {
+              pal <- rainbow(n_cats)
             }
+            names(pal) <- cats
+            anno_df_clean <- data.frame(Category = df_anno$Category)
+            rownames(anno_df_clean) <- df_anno$Gene
+            missing_genes <- setdiff(all_genes, rownames(anno_df_clean))
+            if (length(missing_genes) > 0) {
+              missing_df <- data.frame(Category = rep(NA, length(missing_genes)))
+              rownames(missing_df) <- missing_genes
+              anno_df_clean <- rbind(anno_df_clean, missing_df)
+            }
+            anno_df_clean <- anno_df_clean[all_genes, , drop = FALSE]
+            row_annot <- ComplexHeatmap::HeatmapAnnotation(
+              Category = anno_df_clean$Category,
+              col = list(Category = pal),
+              which = "row",
+              show_legend = TRUE,
+              annotation_name_side = "top"
+            )
           }
         }
-
-        for (sp in species_order) {
-          mat <- prepare_heatmap_matrix_publication(
-            expression_data = plot_data,
-            species_code = sp,
-            gene_order = all_genes,
-            transform_type = transform,
-            time_axis_type = time_axis,
-            show_t0 = show_t0
-          )
-
-          ht <- make_publication_heatmap(
-            mat = mat,
-            species_prefix = paste0(config[[sp]]$short, "-"),
-            species_name = config[[sp]]$name,
-            color_fun = color_fun,
-            row_annot = if (sp == species_order[4]) row_annot else NULL
-          )
-          ht_list[[length(ht_list) + 1]] <- ht
-        }
-
-        # Draw
-        draw_2x2_heatmap(ht_list, legend = NULL)
-
-        dev.off()
-      } else {
-        p <- plotly::plotly_build(isolate(output$gene_group_plot()))
-        plotly::export(p, file = file)
       }
+
+      for (sp in species_order) {
+        mat <- prepare_heatmap_matrix_publication(
+          expression_data = plot_data,
+          species_code = sp,
+          gene_order = all_genes,
+          transform_type = transform,
+          time_axis_type = time_axis,
+          show_t0 = show_t0
+        )
+
+        ht <- make_publication_heatmap(
+          mat = mat,
+          species_prefix = paste0(config[[sp]]$short, "-"),
+          species_name = config[[sp]]$name,
+          color_fun = color_fun,
+          row_annot = if (sp == species_order[4]) row_annot else NULL
+        )
+        ht_list[[length(ht_list) + 1]] <- ht
+      }
+
+      draw_2x2_heatmap(ht_list, legend = NULL)
+      dev.off()
+
+      # Send file via base64
+      raw <- readBin(tmp, "raw", file.size(tmp))
+      encoded <- jsonlite::base64_enc(raw)
+      mime <- switch(fmt,
+        png = "image/png", jpeg = "image/jpeg",
+        pdf = "application/pdf", svg = "image/svg+xml",
+        "application/octet-stream"
+      )
+      session$sendCustomMessage("download_base64", list(
+        data = encoded,
+        filename = paste0(out_filename, ".", fmt),
+        mime = mime
+      ))
+    } else {
+      # Interactive mode — client-side plotly export
+      session$sendCustomMessage("plotly_export", list(
+        plotId = "gene_group_plot",
+        format = fmt,
+        width = round(modal_w * dpi_val),
+        height = round(modal_h * dpi_val),
+        filename = out_filename
+      ))
     }
-  )
+    removeModal()
+  })
 
   # download handler for pathway data matrix
   output$download_pathway_data <- downloadHandler(
@@ -5013,43 +5066,63 @@ server <- function(input, output, session) {
     })
   })
 
-  # Add download handler for ridgeline plots
-  output$download_ridgeline <- downloadHandler(
-    filename = function() {
-      paste("ridgeline_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".png", sep = "")
-    },
-    content = function(file) {
-      species_data_list <- list()
+  observeEvent(input$export_ridgeline_btn, {
+    show_plot_export_modal("download_ridgeline", "Export Ridgeline Plot")
+  })
 
-      if (input$ridgeline_species == "all") {
-        config <- current_species_config()
-        species_list <- names(config)
-      } else {
-        species_list <- c(input$ridgeline_species)
-      }
+  observeEvent(input$download_ridgeline_confirm, {
+    fmt <- input$download_ridgeline_format
+    w <- input$download_ridgeline_width
+    h <- input$download_ridgeline_height
+    dpi_val <- input$download_ridgeline_dpi
+    if (is.null(fmt)) fmt <- "png"
+    if (is.null(w)) w <- 10
+    if (is.null(h)) h <- 8
+    if (is.null(dpi_val)) dpi_val <- 300
 
-      for (species_id in species_list) {
-        species_data_list[[species_id]] <- get_species_data(species_id)
-      }
-
-      p <- if (input$ridgeline_view == "distribution") {
-        create_ridgeline_plot(
-          species_data_list = species_data_list,
-          is_dark_mode = is_dark(),
-          plot_settings = reactiveValuesToList(plot_settings)
-        )
-      } else {
-        create_threshold_ridgeline(
-          species_data_list = species_data_list,
-          threshold = input$expression_threshold,
-          is_dark_mode = is_dark(),
-          plot_settings = reactiveValuesToList(plot_settings)
-        )
-      }
-
-      ggsave(file, p, width = 10, height = 8, dpi = 300)
+    species_data_list <- list()
+    if (input$ridgeline_species == "all") {
+      config <- current_species_config()
+      species_list <- names(config)
+    } else {
+      species_list <- c(input$ridgeline_species)
     }
-  )
+    for (species_id in species_list) {
+      species_data_list[[species_id]] <- get_species_data(species_id)
+    }
+
+    p <- if (input$ridgeline_view == "distribution") {
+      create_ridgeline_plot(
+        species_data_list = species_data_list,
+        is_dark_mode = is_dark(),
+        plot_settings = reactiveValuesToList(plot_settings)
+      )
+    } else {
+      create_threshold_ridgeline(
+        species_data_list = species_data_list,
+        threshold = input$expression_threshold,
+        is_dark_mode = is_dark(),
+        plot_settings = reactiveValuesToList(plot_settings)
+      )
+    }
+
+    tmp <- tempfile(fileext = paste0(".", fmt))
+    ggsave(tmp, p, device = fmt, width = w, height = h, dpi = dpi_val)
+
+    raw <- readBin(tmp, "raw", file.size(tmp))
+    encoded <- jsonlite::base64_enc(raw)
+    mime <- switch(fmt,
+      png = "image/png", jpeg = "image/jpeg",
+      pdf = "application/pdf", svg = "image/svg+xml",
+      "application/octet-stream"
+    )
+    session$sendCustomMessage("download_base64", list(
+      data = encoded,
+      filename = paste0("ridgeline_plot_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".", fmt),
+      mime = mime
+    ))
+    removeModal()
+  })
   # File reading helper
   read_data_file <- function(file_path, file_name = "") {
     if (is.null(file_path)) {
@@ -5744,4 +5817,21 @@ server <- function(input, output, session) {
       }
     }
   )
+
+  observeEvent(input$trigger_version_modal, {
+    showModal(build_version_modal(app_version_info))
+    shinyjs::runjs(sprintf(
+      'localStorage.setItem("rnacross_seen_version", "%s");',
+      app_version_info$version
+    ))
+  })
+
+  observeEvent(input$show_version_info, {
+    showModal(build_version_modal(app_version_info))
+  })
+
+  observeEvent(input$launch_tutorial_from_modal, {
+    removeModal()
+    shinyjs::delay(300, shinyjs::click("show_help"))
+  })
 }

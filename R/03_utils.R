@@ -72,9 +72,10 @@ create_species_panel <- function(species) {
             class = "custom-button"
           )
         ),
-        downloadButton(
-          paste0(species$id, "_download"),
+        actionButton(
+          paste0(species$id, "_export_btn"),
           "Download Plot",
+          icon = icon("download"),
           class = "btn btn-secondary mt-2 w-100"
         ),
         hr(),

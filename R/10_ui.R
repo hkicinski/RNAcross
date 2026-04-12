@@ -12,6 +12,44 @@ ui <- page_navbar(
   header = tagList(
     useWaiter(),
     useShinyjs(),
+    tags$script(HTML(sprintf(
+      'const RNACROSS_VERSION = "%s";',
+      app_version_info$version
+    ))),
+    tags$script(HTML("
+      // --- Plot Export Handlers ---
+      Shiny.addCustomMessageHandler('plotly_export', function(msg) {
+        var container = document.getElementById(msg.plotId);
+        if (!container) { alert('Plot not found. Please generate the plot first.'); return; }
+        var gd = container.querySelector('.js-plotly-plot') ||
+                 container.querySelector('.plotly.html-widget') ||
+                 container;
+        Plotly.downloadImage(gd, {
+          format: msg.format,
+          width: msg.width,
+          height: msg.height,
+          filename: msg.filename,
+          scale: 1
+        }).catch(function(err) {
+          alert('Export failed: ' + err.message);
+        });
+      });
+
+      Shiny.addCustomMessageHandler('download_base64', function(msg) {
+        var raw = atob(msg.data);
+        var arr = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        var blob = new Blob([arr], {type: msg.mime});
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = msg.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function() { URL.revokeObjectURL(url); }, 100);
+      });
+    ")),
     custom_css,
 
     # splash screen css
@@ -246,6 +284,13 @@ ui <- page_navbar(
         ),
         div(
           class = "d-flex align-items-center",
+          actionButton(
+            "show_version_info",
+            label = NULL,
+            icon = icon("bullhorn"),
+            class = "btn-link text-white me-1",
+            title = "What's New"
+          ),
           actionButton("show_help", "Tutorial",
             icon = icon("question-circle"),
             class = "btn-link text-white me-2"
@@ -440,6 +485,14 @@ ui <- page_navbar(
         // Clean up glow trail container
         const glowContainer = document.getElementById("glow-trail-container");
         if (glowContainer) glowContainer.remove();
+        setTimeout(function() {
+          var seenVersion = localStorage.getItem("rnacross_seen_version");
+          if (seenVersion !== RNACROSS_VERSION) {
+            if (window.Shiny && Shiny.setInputValue) {
+              Shiny.setInputValue("trigger_version_modal", Math.random());
+            }
+          }
+        }, 500);
       }, 800);
     }
 
@@ -461,6 +514,14 @@ ui <- page_navbar(
       if (skipStored === "true") {
         document.getElementById("splash-screen").style.display = "none";
         document.getElementById("glow-trail-container").style.display = "none";
+        setTimeout(function() {
+          var seenVersion = localStorage.getItem("rnacross_seen_version");
+          if (seenVersion !== RNACROSS_VERSION) {
+            if (window.Shiny && Shiny.setInputValue) {
+              Shiny.setInputValue("trigger_version_modal", Math.random());
+            }
+          }
+        }, 1000);
       } else {
         // Add body class when showing splash
         document.body.classList.add("splash-active");
@@ -512,6 +573,7 @@ ui <- page_navbar(
       console.log('Clearing session');
       localStorage.removeItem('rnacross_session');
       localStorage.removeItem('rnacross_session_timestamp');
+      localStorage.removeItem('rnacross_seen_version');
       location.reload();
     });
     "))
@@ -530,7 +592,14 @@ ui <- page_navbar(
       ),
       p(
         class = "mt-2 mb-0",
-        "Version 2.9.2 - Updated January 2026"
+        sprintf("Version %s - Updated %s",
+          app_version_info$version,
+          format(as.Date(app_version_info$release_date), "%B %Y")),
+        br(),
+        a(href = "https://github.com/hkicinski/RNAcross/issues",
+          target = "_blank",
+          icon("github"), " Report a Bug or Suggest a Feature",
+          class = "text-white")
       )
     )
   ),
@@ -959,10 +1028,10 @@ ui <- page_navbar(
             class = "custom-button"
           ),
 
-          # download button for the plot
-          downloadButton(
-            "download_combined_plot",
+          actionButton(
+            "export_combined_plot_btn",
             "Download Plot",
+            icon = icon("download"),
             class = "btn btn-secondary mt-2 w-100"
           )
         )
@@ -1275,9 +1344,10 @@ ui <- page_navbar(
             icon = icon("chart-line"),
             class = "custom-button"
           ),
-          downloadButton(
-            "download_group_plot",
+          actionButton(
+            "export_group_plot_btn",
             "Download Plot",
+            icon = icon("download"),
             class = "btn btn-secondary mt-2 w-100"
           ),
           conditionalPanel(
@@ -1455,9 +1525,10 @@ ui <- page_navbar(
             icon = icon("chart-line"),
             class = "custom-button"
           ),
-          downloadButton(
-            "download_ortholog_heatmap",
+          actionButton(
+            "export_ortholog_heatmap_btn",
             "Download Heatmap",
+            icon = icon("download"),
             class = "btn btn-secondary mt-2 w-100"
           ),
           downloadButton(
@@ -1515,9 +1586,10 @@ ui <- page_navbar(
             icon = icon("chart-line"),
             class = "custom-button"
           ),
-          downloadButton(
-            "download_ridgeline",
+          actionButton(
+            "export_ridgeline_btn",
             "Download Plot",
+            icon = icon("download"),
             class = "btn btn-secondary mt-2 w-100"
           )
         )
