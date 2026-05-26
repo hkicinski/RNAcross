@@ -1,14 +1,18 @@
 app_version_info <- list(
-  version      = "3.0.0",
-  release_date = "2026-04-12",
+  version      = "3.1.0",
+  release_date = "2026-05-26",
   title        = "Welcome! App Updates",
   message      = c(
-    "This release focuses on streamlining the RNAcross update scope. For each new update, users will have a chance to see any new bug fixes or feature changes made to the app!",
-    "You may be thinking: why version 3.0.0? Many changes have been made since the inception of this app. Now, I am making sure to document each so that you know each capability!"
+    "This release focuses on feature release for RNAcross, as well as bug fixes prevailing on the UI. Given the amount of new content, the app will now be in version 3.1.0."
   ),
-  features   = NULL,
+  features   = c(
+    "YGOB + CGOB Pillars Search: Orphan genes or genes lacking Orthologous Group (OG) assignments can now be discovered. The search engine uses a fallback structure (gene_lookup table → synteny data → true orphans) and the gene query hub will report the specific status of the gene.",
+    "Similarity Search: Search and overlay genes with similar temporal expression profiles (shapes) across single or multiple species. Results include rigorous statistical metrics including Pearson R, permutation P-Values, and null percentiles.",
+    "Interactive Plot Styling: Debuted a new click-and-customize feature using Plotly.js for the Gene Group Analysis line plot, allowing on-the-fly aesthetic editing of plot traces."
+  ),
   bug_fixes  = c(
-    "Download buttons now functional with configurable resolution, dimensions, and file type selection (.jpeg, .png, .pdf)"
+    "Splash Screen Logo Fix: Fixed letterboxing and black bars on non-16:9 screens by changing SVG scaling behavior from 'meet' to 'slice', ensuring a full-bleed splash screen regardless of display size.",
+    "Species Formatting: Ensured species names properly follow binomial nomenclature (italics) across all outputs and UI elements."
   ),
   show_changelog = TRUE,
   changelog_url  = "https://github.com/hkicinski/RNAcross/blob/main/CHANGELOG.md",

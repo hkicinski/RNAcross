@@ -766,3 +766,189 @@ process_multi_species_gene_set <- function(gene_mapping, species_data_list, conf
     return(NULL)
   }
 }
+
+# --- Gene Similarity Shape-Search Service Functions ---
+
+#' Convert character timepoints to numeric minutes
+#' @param tp Character vector of timepoints (e.g. '15min', '1.5h')
+#' @return Numeric vector of minutes
+tp_to_minutes <- function(tp) {
+  sapply(tp, function(x) {
+    if (grepl("min$", x)) return(as.numeric(gsub("min$", "", x)))
+    if (grepl("h$", x)) return(as.numeric(gsub("h$", "", x)) * 60)
+    NA_real_
+  }, USE.NAMES = FALSE)
+}
+
+#' Build wide z-scored consensus matrix
+#' @param mat Expression matrix
+#' @param sample_info Sample info dataframe
+#' @return Data frame with gene_id as rownames and timepoints as columns
+build_consensus_wide <- function(mat, sample_info) {
+  tp_order <- unique(sample_info$Timepoint)
+  mat_long <- mat %>%
+    as.data.frame() %>%
+    rownames_to_column("gene_id") %>%
+    pivot_longer(-gene_id, names_to = "Sample", values_to = "expression") %>%
+    left_join(sample_info, by = "Sample")
+  z_rep <- mat_long %>%
+    group_by(gene_id, Replicate) %>%
+    mutate(
+      expr_sd = sd(expression, na.rm = TRUE),
+      z_score = if_else(is.na(expr_sd) | expr_sd == 0, 0,
+                        (expression - mean(expression, na.rm = TRUE)) / expr_sd)
+    ) %>%
+    ungroup()
+  consensus <- z_rep %>%
+    group_by(gene_id, Timepoint) %>%
+    summarise(consensus_z = mean(z_score, na.rm = TRUE), .groups = "drop")
+  consensus$Timepoint <- factor(consensus$Timepoint, levels = tp_order)
+  consensus %>%
+    pivot_wider(names_from = Timepoint, values_from = consensus_z) %>%
+    column_to_rownames("gene_id")
+}
+
+#' Filter invariant genes
+#' @param consensus_wide Wide matrix
+#' @return Matrix with invariant rows removed
+filter_invariant <- function(consensus_wide) {
+  row_sds <- apply(consensus_wide, 1, sd, na.rm = TRUE)
+  consensus_wide[!is.na(row_sds) & row_sds > 0, , drop = FALSE]
+}
+
+#' Run unified gene similarity search
+#' Handles both single-species and cross-species cases
+#' @param query_gene_name User's query gene string
+#' @param ref_species Reference species ID (e.g. 'sc')
+#' @param tgt_species Target species ID (e.g. 'cg')
+#' @param top_x Number of top matches to return
+#' @param all_species_data Global RNAcross data object
+#' @return List containing table, plot_data, query_id, and interpolation_gaps (if any)
+run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top_x, all_species_data) {
+  n_null <- 1000
+  n_perm <- 1000
+  set.seed(2026)
+  
+  get_sp_data <- function(sp) {
+    sp_data <- all_species_data[[sp]]
+    mat <- if (!is.null(sp_data[["rlog"]])) sp_data[["rlog"]] else sp_data[[paste0(sp, "_rlog")]]
+    info <- if (!is.null(sp_data[["sample_info"]])) sp_data[["sample_info"]] else sp_data[[paste0(sp, "_sample_info")]]
+    list(mat = mat, sample_info = info)
+  }
+  
+  ref_data <- get_sp_data(ref_species)
+  ref_consensus_wide <- build_consensus_wide(ref_data$mat, ref_data$sample_info)
+  
+  gene_lookup <- as.data.table(all_species_data$gene_lookup)
+  lookup_match <- gene_lookup[species == ref_species & toupper(gene_name) == toupper(query_gene_name)]
+  
+  if (nrow(lookup_match) == 0) {
+    if (toupper(query_gene_name) %in% toupper(rownames(ref_data$mat))) {
+      query_gene_id <- rownames(ref_data$mat)[toupper(rownames(ref_data$mat)) == toupper(query_gene_name)][1]
+    } else {
+      stop(paste("Query gene", query_gene_name, "not found in reference species", ref_species))
+    }
+  } else {
+    query_gene_id <- lookup_match$gene_id[1]
+    if (!query_gene_id %in% rownames(ref_data$mat)) {
+      stop(paste("Query gene mapped to", query_gene_id, "but not found in expression matrix"))
+    }
+  }
+  
+  ref_tp_labels <- colnames(ref_consensus_wide)
+  ref_tp_mins <- tp_to_minutes(ref_tp_labels)
+  ref_query_profile <- as.numeric(ref_consensus_wide[query_gene_id, ])
+  
+  tgt_data <- get_sp_data(tgt_species)
+  tgt_consensus_wide <- build_consensus_wide(tgt_data$mat, tgt_data$sample_info)
+  tgt_tp_labels <- colnames(tgt_consensus_wide)
+  tgt_tp_mins <- tp_to_minutes(tgt_tp_labels)
+  
+  grids_match <- identical(sort(ref_tp_mins), sort(tgt_tp_mins))
+  interp_gaps <- NULL
+  
+  if (grids_match) {
+    aligned_query <- ref_query_profile[match(tgt_tp_mins, ref_tp_mins)]
+  } else {
+    aligned <- approx(x = ref_tp_mins, y = ref_query_profile, xout = tgt_tp_mins, method = "linear")
+    aligned_query <- aligned$y
+    interp_gaps <- sapply(tgt_tp_mins, function(t) {
+      if (t %in% ref_tp_mins) return(0)
+      lower <- max(ref_tp_mins[ref_tp_mins < t])
+      upper <- min(ref_tp_mins[ref_tp_mins > t])
+      upper - lower
+    })
+  }
+  
+  tgt_filtered <- filter_invariant(tgt_consensus_wide)
+  
+  cors <- apply(tgt_filtered, 1, function(x) {
+    cor(x, aligned_query, method = "pearson", use = "pairwise.complete.obs")
+  })
+  
+  cor_df <- tibble(gene_id = names(cors), pearson_r = cors) %>%
+    left_join(
+      gene_lookup %>% filter(species == tgt_species) %>% select(gene_id, gene_name) %>% distinct(gene_id, .keep_all = TRUE),
+      by = "gene_id"
+    ) %>%
+    filter(!is.na(pearson_r)) %>%
+    filter(!(ref_species == tgt_species & gene_id == query_gene_id)) %>%
+    arrange(desc(pearson_r))
+    
+  null_sample_idx <- sample(seq_len(nrow(cor_df)), min(n_null, nrow(cor_df)))
+  null_cors <- cor_df$pearson_r[null_sample_idx]
+  
+  top_matches <- head(cor_df, top_x)
+  top_matches$null_percentile <- sapply(top_matches$pearson_r, function(r) {
+    round(mean(null_cors <= r) * 100, 2)
+  })
+  
+  top_matches$perm_p_value <- NA_real_
+  for (j in seq_len(nrow(top_matches))) {
+    cand_vec <- as.numeric(tgt_filtered[top_matches$gene_id[j], ])
+    obs_cor <- top_matches$pearson_r[j]
+    perm_cors <- replicate(n_perm, {
+      cor(sample(cand_vec), aligned_query, method = "pearson", use = "pairwise.complete.obs")
+    })
+    top_matches$perm_p_value[j] <- mean(perm_cors >= obs_cor)
+  }
+  
+  top_matches <- top_matches %>%
+    select(gene_id, gene_name, pearson_r, null_percentile, perm_p_value) %>%
+    mutate(
+      pearson_r = round(pearson_r, 4),
+      perm_p_value = round(perm_p_value, 4)
+    )
+  
+  top_plot_ids <- top_matches$gene_id
+  tgt_long <- tgt_filtered[top_plot_ids, , drop = FALSE] %>%
+    as.data.frame() %>%
+    rownames_to_column("gene_id") %>%
+    pivot_longer(-gene_id, names_to = "Timepoint", values_to = "consensus_z")
+  tgt_long$label <- tgt_long$gene_id
+  for (i in seq_len(nrow(tgt_long))) {
+    gn <- cor_df$gene_name[cor_df$gene_id == tgt_long$gene_id[i]]
+    if (length(gn) > 0 && !is.na(gn[1]) && gn[1] != "") {
+      tgt_long$label[i] <- paste0(gn[1], " (", tgt_long$gene_id[i], ")")
+    }
+  }
+  
+  ref_plot <- data.frame(
+    Timepoint = tgt_tp_labels,
+    consensus_z = aligned_query,
+    gene_id = "query",
+    label = paste0(query_gene_name, " (query)")
+  )
+  
+  plot_data <- bind_rows(tgt_long, ref_plot)
+  chrono_order <- tgt_tp_labels[order(tgt_tp_mins)]
+  plot_data$Timepoint <- factor(plot_data$Timepoint, levels = chrono_order)
+  plot_data$type <- ifelse(plot_data$gene_id == "query", "query", "match")
+  
+  list(
+    table = top_matches,
+    plot_data = plot_data,
+    query_id = query_gene_id,
+    interp_gaps = interp_gaps
+  )
+}

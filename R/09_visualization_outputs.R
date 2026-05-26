@@ -32,7 +32,7 @@ create_ortholog_table <- function(gene_mapping, config = NULL) {
     })
 
     # add to column names mapping
-    col_names[[config[[sp_code]]$name]] <- col_name
+    col_names[[paste0("<i>", config[[sp_code]]$name, "</i>")]] <- col_name
   }
 
   # create a datatable
@@ -44,7 +44,8 @@ create_ortholog_table <- function(gene_mapping, config = NULL) {
       dom = "tip"
     ),
     colnames = col_names,
-    rownames = FALSE
+    rownames = FALSE,
+    escape = FALSE
   )
 
   return(dt)
@@ -144,14 +145,58 @@ create_orthogroup_summary <- function(query_result, config = NULL) {
   }
 
   if (is.null(config)) {
-    config <- DEFAULT_SPECIES_CONFIG # Use default if not provided
+    config <- DEFAULT_SPECIES_CONFIG
   }
 
-  # Count genes per species
+  if (!is.null(query_result$source) && query_result$source == "gene_lookup_no_orthogroup") {
+    return(tags$div(
+      h5("Gene Information"),
+      div(
+        class = "alert alert-warning py-2",
+        icon("exclamation-triangle"),
+        " This gene is not assigned to any orthogroup."
+      ),
+      tags$ul(
+        tags$li(paste("Gene ID:", query_result$gene_id)),
+        tags$li(paste("Species:", {
+          sp <- names(query_result$genes_by_species)[1]
+          if (!is.null(sp) && sp %in% names(config)) config[[sp]]$name else sp
+        }))
+      )
+    ))
+  }
+
+  if (!is.null(query_result$source) && query_result$source == "synteny_aided") {
+    gene_counts <- sapply(query_result$genes_by_species, nrow)
+    total_genes <- sum(gene_counts)
+
+    return(tags$div(
+      h5("Synteny-Aided Orthology"),
+      div(
+        class = "alert alert-info py-2",
+        icon("link"),
+        " Based on YGOB/CGOB synteny data. Not an OrthoFinder orthogroup."
+      ),
+      tags$ul(
+        tags$li(paste("Total genes:", total_genes)),
+        tags$li(paste("Species represented:", sum(gene_counts > 0))),
+        tags$li(
+          "Gene distribution:",
+          tags$ul(
+            lapply(names(gene_counts)[gene_counts > 0], function(sp) {
+              species_name <- if (sp %in% names(config)) config[[sp]]$name else sp
+              count <- gene_counts[sp]
+              tags$li(paste0(species_name, ": ", count, " gene", if (count > 1) "s" else ""))
+            })
+          )
+        )
+      )
+    ))
+  }
+
   gene_counts <- sapply(query_result$genes_by_species, nrow)
   total_genes <- sum(gene_counts)
 
-  # Create summary HTML
   summary_html <- tags$div(
     h5("Orthogroup Summary"),
     tags$ul(
@@ -186,18 +231,20 @@ create_orthogroup_details_table <- function(query_result, config = NULL) {
     return(NULL)
   }
 
-  # use default config if not provided
+  if (!is.null(query_result$source) && query_result$source == "gene_lookup_no_orthogroup") {
+    return(NULL)
+  }
+
   if (is.null(config)) {
     config <- DEFAULT_SPECIES_CONFIG
   }
 
-  # collect gene info using list collection
   gene_list <- lapply(names(query_result$genes_by_species), function(sp) {
     genes_df <- query_result$genes_by_species[[sp]]
     if (nrow(genes_df) > 0) {
       species_name <- if (!is.null(config[[sp]])) config[[sp]]$name else sp
 
-      genes_df$Species <- species_name
+      genes_df$Species <- paste0("<i>", species_name, "</i>")
       genes_df$SpeciesCode <- sp
 
       genes_df[, c("Species", "gene_id", "gene_name", "display"), drop = FALSE]
@@ -216,7 +263,12 @@ create_orthogroup_details_table <- function(query_result, config = NULL) {
     return(NULL)
   }
 
-  # Create a nicely formatted datatable
+  caption_text <- if (!is.null(query_result$source) && query_result$source == "synteny_aided") {
+    paste("Synteny-aided orthologs (YGOB/CGOB) | Total genes:", nrow(all_genes))
+  } else {
+    paste("Orthogroup:", query_result$orthogroup, "| Total genes:", nrow(all_genes))
+  }
+
   dt <- datatable(
     all_genes[, c("Species", "gene_id", "gene_name")],
     options = list(
@@ -229,12 +281,10 @@ create_orthogroup_details_table <- function(query_result, config = NULL) {
     ),
     colnames = c("Species", "Gene ID", "Gene Name"),
     rownames = FALSE,
+    escape = FALSE,
     caption = htmltools::tags$caption(
       style = "caption-side: top; text-align: left; font-weight: bold;",
-      paste(
-        "Orthogroup:", query_result$orthogroup,
-        "| Total genes:", nrow(all_genes)
-      )
+      caption_text
     )
   )
 

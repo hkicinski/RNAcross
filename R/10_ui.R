@@ -12,6 +12,29 @@ ui <- page_navbar(
   header = tagList(
     useWaiter(),
     useShinyjs(),
+    tags$head(includeScript("www/interactive_editor.js")),
+    tags$head(
+      tags$meta(name = "theme-color", content = "#000814"),
+      tags$meta(name = "color-scheme", content = "dark"),
+      tags$style(HTML("html { color-scheme: dark; }"))
+    ),
+    absolutePanel(
+      id = "plot_aesthetic_editor",
+      top = 100, right = 20, width = 320,
+      fixed = TRUE,
+      draggable = FALSE, # Manual JS drag
+      style = "z-index: 9999; background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none;",
+      div(
+        id = "plot_editor_header",
+        style = "padding: 10px 15px; background: var(--bs-primary); color: white; border-top-left-radius: 5px; border-top-right-radius: 5px; cursor: move; display: flex; justify-content: space-between; align-items: center;",
+        strong("Aesthetic Editor"),
+        actionButton("close_editor_btn", "", icon = icon("times"), class = "btn-sm btn-link text-white p-0 text-decoration-none border-0", style = "line-height: 1;")
+      ),
+      div(
+        style = "padding: 15px; max-height: 70vh; overflow-y: auto;",
+        uiOutput("plot_editor_ui")
+      )
+    ),
     tags$script(HTML(sprintf(
       'const RNACROSS_VERSION = "%s";',
       app_version_info$version
@@ -49,28 +72,78 @@ ui <- page_navbar(
         document.body.removeChild(a);
         setTimeout(function() { URL.revokeObjectURL(url); }, 100);
       });
+
+      // --- Enter Key Submit Handlers ---
+      $(document).on('keyup', function(e) {
+        if (e.which == 13) {
+          var tag = document.activeElement ? document.activeElement.tagName : '';
+          if (tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'A' || tag === 'SELECT') return;
+          
+          if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.selectize-control')) return;
+
+          var possibleButtons = [
+            'global_search_button',
+            'combined_search_button',
+            'analyze_gene_groups',
+            'run_pca',
+            'generate_heatmap',
+            'generate_ridgeline'
+          ];
+          
+          var clicked = false;
+          
+          for (var i = 0; i < possibleButtons.length; i++) {
+            var btn = document.getElementById(possibleButtons[i]);
+            if (btn && btn.offsetParent !== null && !btn.disabled) {
+              btn.click();
+              clicked = true;
+              break;
+            }
+          }
+          
+          if (!clicked) {
+            var allBtns = document.querySelectorAll('button[id$=\"_search_button\"]');
+            for (var i = 0; i < allBtns.length; i++) {
+              if (allBtns[i].offsetParent !== null && !allBtns[i].disabled) {
+                allBtns[i].click();
+                break;
+              }
+            }
+          }
+        }
+      });
     ")),
     custom_css,
 
-    # splash screen css
+    # Fix Plotly pointer events and splash screen css
     tags$style(HTML("
-      /* Splash Screen Styles */
+      /* FORCE PLOTLY ELEMENTS TO BE CLICKABLE */
+      .js-plotly-plot text, 
+      .js-plotly-plot tspan,
+      .js-plotly-plot path,
+      .js-plotly-plot circle,
+      .js-plotly-plot rect.bg,
+      .js-plotly-plot rect.nsewdrag {
+          pointer-events: all !important;
+      }
+
+      /* Force backgrounds to match SVG logo ONLY during splash */
+      body.splash-active,
+      body.splash-active .bslib-page-fill,
+      body.splash-active .bslib-page,
+      body.splash-active .container-fluid,
+      body.splash-active > div,
+      body.splash-active > nav {
+        background-color: #000814 !important;
+      }
       #splash-screen {
         position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        /* Use safe viewport units */
-        height: 100svh;
-        height: 100dvh;
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        inset: 0;
+        background: #000814;
         z-index: 9999;
         overflow: hidden;
-        display: grid;
-        place-items: center;
-        padding: clamp(12px, 3vw, 48px);
-        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
       }
 
       #splash-screen.fade-out {
@@ -79,64 +152,33 @@ ui <- page_navbar(
         transition: all 0.8s ease-out;
       }
 
-      /* SVG container with safe viewport handling */
       #splash-logo {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        padding: 0;
+      }
+
+      #svg-wrapper {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        padding: 0;
+      }
+
+      #svg-wrapper svg, #splash-logo svg {
+        position: absolute;
+        inset: 0;
         width: 100%;
         height: 100%;
-        position: relative;
-        display: grid;
-        place-items: center;
-        padding: 0;
         margin: 0;
-      }
-
-      /* SVG wrapper and direct SVG styling */
-      #svg-wrapper {
-        width: min(96vw, 1600px);
-        height: auto;
-        max-height: min(88svh, 760px);
-        position: relative;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-      }
-
-    #svg-wrapper svg, #splash-logo svg {
-      width: 100vw !important;
-      height: 100vh !important;
-      object-fit: cover !important;
-      position: fixed !important;
-      top: 0 !important;
-      left: 0 !important;
-      }
-
-      /* Mobile-specific adjustments */
-      @media (max-width: 480px) {
-        #svg-wrapper {
-          width: 92vw;
-          max-height: 80svh;
-        }
-
-        #svg-wrapper svg, #splash-logo svg {
-          max-height: 80svh !important;
-        }
-      }
-
-      /* Very tall narrow screens */
-      @media (max-aspect-ratio: 3/4) {
-        #svg-wrapper svg, #splash-logo svg {
-          max-height: 82svh !important;
-        }
+        padding: 0;
+        display: block;
       }
 
       /* Prevent any overflow from the splash screen */
       body.splash-active {
         overflow: hidden;
-      }
-
-      /* Ensure proper scaling on all devices */
-      #splash-screen * {
-        max-width: 100%;
       }
 
       /* Glowing trail effect */
@@ -336,7 +378,7 @@ ui <- page_navbar(
       }
 
       // Ensure SVG scales properly without cropping
-      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
       svg.removeAttribute("width");
       svg.removeAttribute("height");
       svg.style.width = "100%";
@@ -576,6 +618,66 @@ ui <- page_navbar(
       localStorage.removeItem('rnacross_seen_version');
       location.reload();
     });
+    ")),
+
+    tags$script(HTML("
+      $(document).on('shiny:disconnected', function(event) {
+        if (document.getElementById('shiny-disconnected-overlay')) return;
+
+        var overlay = document.createElement('div');
+        overlay.id = 'shiny-disconnected-overlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#1a1a2e;z-index:99999;display:flex;align-items:center;justify-content:center;text-align:center;color:#e0e0e0;font-family:Inter,Segoe UI,sans-serif;';
+        overlay.innerHTML =
+          '<div style=\"max-width:500px;padding:40px;background:#16213e;border-radius:16px;border:1px solid #1a1a4e;\">' +
+            '<h2 style=\"color:#ff6b6b;margin-bottom:16px;font-size:1.6rem;\">Something went wrong</h2>' +
+            '<p style=\"margin-bottom:12px;line-height:1.6;font-size:0.95rem;\">The app has encountered an error or lost connection to the server.</p>' +
+            '<p style=\"margin-bottom:12px;line-height:1.6;font-size:0.95rem;\">Please try reloading the page. If the issue persists, report it:</p>' +
+            '<p style=\"margin-bottom:12px;line-height:1.6;font-size:0.95rem;\">' +
+              '<a href=\"https://github.com/hkicinski/RNAcross/issues\" target=\"_blank\" style=\"color:#6ea8fe;text-decoration:underline;\">GitHub Issues</a>' +
+              ' &nbsp;|&nbsp; ' +
+              '<a href=\"mailto:hkicinski@uiowa.edu\" style=\"color:#6ea8fe;text-decoration:underline;\">hkicinski@uiowa.edu</a>' +
+            '</p>' +
+            '<button onclick=\"location.reload()\" style=\"display:inline-block;margin-top:20px;padding:10px 28px;background:#0d6efd;color:white;border:none;border-radius:8px;font-size:1rem;cursor:pointer;\">Reload App</button>' +
+          '</div>';
+        document.body.appendChild(overlay);
+
+        var waiter = document.querySelector('.waiter-overlay');
+        if (waiter) waiter.style.display = 'none';
+
+        var splash = document.getElementById('splash-screen');
+        if (splash) splash.style.display = 'none';
+      });
+
+      $(document).on('shiny:error', function(event) {
+        var waiter = document.querySelector('.waiter-overlay');
+        if (waiter) waiter.style.display = 'none';
+      });
+
+      var _waiterTimeout = null;
+      $(document).on('shiny:busy', function() {
+        clearTimeout(_waiterTimeout);
+        _waiterTimeout = setTimeout(function() {
+          var waiter = document.querySelector('.waiter-overlay');
+          if (waiter && waiter.style.display !== 'none') {
+            waiter.style.display = 'none';
+          }
+        }, 45000);
+      });
+      $(document).on('shiny:idle', function() {
+        clearTimeout(_waiterTimeout);
+        setTimeout(function() {
+          var waiter = document.querySelector('.waiter-overlay');
+          if (waiter && waiter.style.display !== 'none') {
+            waiter.style.display = 'none';
+          }
+        }, 500);
+      });
+    ")),
+
+    tags$style(HTML("
+      #shiny-disconnected-screen { display: none !important; }
+      .shiny-output-error { visibility: hidden; }
+      .shiny-output-error:before { visibility: hidden; }
     "))
   ),
 
@@ -676,36 +778,73 @@ ui <- page_navbar(
               uiOutput("orthogroup_summary")
             ),
 
-            # quick action buttons
-            div(
-              class = "mt-4",
-              h5("Quick Actions"),
-              actionButton(
-                "explore_species_view",
-                "View in Single Species View",
-                icon = icon("chart-line"),
-                class = "btn btn-secondary w-100 mb-2"
-              ),
-              actionButton(
-                "explore_combined_view",
-                "View in Comparative Analysis",
-                icon = icon("layer-group"),
-                class = "btn btn-secondary w-100 mb-2"
-              ),
-              actionButton(
-                "explore_heatmap",
-                "Generate Cross-Species Heatmap",
-                icon = icon("th"),
-                class = "btn btn-secondary w-100"
+            uiOutput("explorer_quick_actions"),
+
+            uiOutput("explorer_orthogroup_section")
+          )
+        )
+      )
+    )
+  ),
+  # gene similarity panel
+  nav_panel(
+    title = span(icon("chart-line"), " Find similar profiles"),
+    value = "similarity_search",
+    div(
+      class = "container-fluid",
+      style = "padding: 20px; padding-bottom: 120px;",
+      fluidRow(
+        column(
+          width = 3,
+          div(
+            class = "sidebar-panel",
+            h4(class = "mb-4", "Similarity Search"),
+            textInput(
+              "similarity_gene_input",
+              "Query Gene:",
+              placeholder = "e.g., PHO84"
+            ),
+            selectizeInput(
+              "similarity_ref_species",
+              "Reference Species:",
+              choices = NULL,
+              options = list(
+                render = I("{
+                  option: function(item, escape) { return '<div><i>' + escape(item.label) + '</i></div>'; },
+                  item: function(item, escape) { return '<div><i>' + escape(item.label) + '</i></div>'; }
+                }")
               )
             ),
-
-            # orthogroup table
-            div(
-              class = "mt-4",
-              h5("Orthogroup Members"),
-              DTOutput("explorer_orthogroup_table")
+            checkboxGroupInput(
+              "similarity_tgt_species",
+              "Target Species (Overlay):",
+              choices = NULL
+            ),
+            sliderInput(
+              "similarity_top_matches",
+              "Top Matches (Graph - Table):",
+              min = 1,
+              max = 100,
+              value = c(5, 20),
+              step = 1
+            ),
+            actionButton(
+              "similarity_search_button",
+              "Search Profiles",
+              icon = icon("search"),
+              class = "btn-primary mt-3 w-100"
             )
+          )
+        ),
+        column(
+          width = 9,
+          div(
+            class = "main-plot-area",
+            plotlyOutput("similarity_plot", height = "500px")
+          ),
+          div(
+            class = "mt-4",
+            DTOutput("similarity_table")
           )
         )
       )
@@ -1092,7 +1231,7 @@ ui <- page_navbar(
               "gene_list",
               "Or paste gene list:",
               rows = 5,
-              placeholder = "Enter genes, one per line"
+              placeholder = "Enter genes separated by newlines, commas, or spaces"
             )
           ),
           conditionalPanel(
@@ -1492,7 +1631,7 @@ ui <- page_navbar(
             "ortholog_gene_list",
             "Enter gene list:",
             rows = 5,
-            placeholder = "Enter genes, one per line (e.g., PHO4, PHO81, PHO84)"
+            placeholder = "Enter genes separated by newlines, commas, or spaces (e.g., PHO4, PHO81, PHO84)"
           ),
           fileInput(
             "ortholog_gene_file",

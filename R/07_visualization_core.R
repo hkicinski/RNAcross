@@ -332,7 +332,28 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
         font = list(color = text_color),
         hoverlabel = list(bgcolor = if (is_dark_mode) "#444" else "white"),
         showlegend = TRUE
-      ))
+      ) %>%
+      htmlwidgets::onRender("
+        function(el, x) {
+          var debugMsg = document.createElement('div');
+          debugMsg.className = 'interactive-debug-msg';
+          debugMsg.style.padding = '5px';
+          debugMsg.style.fontWeight = 'bold';
+          
+          if (typeof window.initInteractiveEditor === 'function') {
+            debugMsg.style.color = 'green';
+            debugMsg.innerText = '[System: Interactive Editor Successfully Initialized]';
+            window.initInteractiveEditor(el);
+          } else {
+            debugMsg.style.color = 'red';
+            debugMsg.innerText = '[System Error: Interactive Editor JS failed to load or is undefined]';
+          }
+          
+          if (el && el.parentNode) {
+            el.parentNode.insertBefore(debugMsg, el);
+          }
+        }
+      "))
   } else if (viz_type == "bar") {
     summary_data <- plot_data %>%
       group_by(Timepoint, Group, Gene) %>%
@@ -594,7 +615,7 @@ create_group_summary_table <- function(plot_data, species_name = NULL) {
 
   # replace "Custom Group" with species-specific name
   if (!is.null(species_name) && "Custom Group" %in% summary_data$Group) {
-    summary_data$Group[summary_data$Group == "Custom Group"] <- paste(species_name, "Gene Set")
+    summary_data$Group[summary_data$Group == "Custom Group"] <- paste0("<i>", species_name, "</i> Gene Set")
   }
 
   datatable(
@@ -604,7 +625,8 @@ create_group_summary_table <- function(plot_data, species_name = NULL) {
       scrollX = TRUE,
       dom = "tp"
     ),
-    rownames = FALSE
+    rownames = FALSE,
+    escape = FALSE
   )
 }
 

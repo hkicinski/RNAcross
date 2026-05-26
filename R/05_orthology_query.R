@@ -130,6 +130,57 @@ query_orthogroups <- function(gene_query, current_data, config, get_species_data
   return(NULL)
 }
 
+build_synteny_group <- function(gene_id, species_code, all_species_data) {
+  syn <- all_species_data$legacy_synteny
+  if (is.null(syn)) return(NULL)
+
+  sc_gene <- NULL
+
+  if (species_code == "sc") {
+    sc_gene <- gene_id
+  } else {
+    table_name <- paste0(species_code, "ToSc")
+    if (!is.null(syn[[table_name]])) {
+      id_col <- paste0(species_code, "id")
+      syn_match <- syn[[table_name]][syn[[table_name]][[id_col]] == gene_id, ]
+      if (nrow(syn_match) > 0) {
+        sc_gene <- as.character(syn_match$scid[1])
+      }
+    }
+  }
+
+  if (is.null(sc_gene)) return(NULL)
+
+  genes_by_species <- list()
+  genes_by_species[["sc"]] <- sc_gene
+
+  if (!is.null(syn$cgToSc)) {
+    cg_matches <- syn$cgToSc[syn$cgToSc$scid == sc_gene, ]
+    if (nrow(cg_matches) > 0) genes_by_species[["cg"]] <- as.character(cg_matches$cgid)
+  }
+
+  if (!is.null(syn$klToSc)) {
+    kl_matches <- syn$klToSc[syn$klToSc$scid == sc_gene, ]
+    if (nrow(kl_matches) > 0) genes_by_species[["kl"]] <- as.character(kl_matches$klid)
+  }
+
+  if (!is.null(syn$caToSc)) {
+    ca_matches <- syn$caToSc[syn$caToSc$scid == sc_gene, ]
+    if (nrow(ca_matches) > 0) genes_by_species[["ca"]] <- as.character(ca_matches$caid)
+  }
+
+  if (!is.null(syn$scToSc)) {
+    sc_paralogs <- syn$scToSc[syn$scToSc$scid == sc_gene, ]
+    if (nrow(sc_paralogs) > 0 && !is.na(sc_paralogs$scid_alt[1])) {
+      sc_all <- unique(c(sc_gene, as.character(sc_paralogs$scid_alt)))
+      sc_all <- sc_all[!is.na(sc_all) & sc_all != ""]
+      if (length(sc_all) > 0) genes_by_species[["sc"]] <- sc_all
+    }
+  }
+
+  return(genes_by_species)
+}
+
 #' Flexible gene query with HOG support
 #'
 #' Main query function that searches for a gene using the lookup table
@@ -219,6 +270,47 @@ query_gene_flexible <- function(gene_query, species_data, all_species_data) {
       )
 
       result$genes_by_species[[sp]] <- genes_df
+    }
+  } else {
+    match_species <- as.character(match_info$species)
+    synteny_group <- build_synteny_group(gene_id, match_species, all_species_data)
+
+    if (!is.null(synteny_group) && length(synteny_group) > 0) {
+      result$source <- "synteny_aided"
+      result$orthogroup <- "Synteny-aided (YGOB/CGOB)"
+
+      for (sp in names(synteny_group)) {
+        sp_gene_ids <- synteny_group[[sp]]
+        sp_info <- all_species_data$gene_lookup[
+          gene_id %in% sp_gene_ids & species == sp
+        ]
+        if (nrow(sp_info) > 0) {
+          genes_df <- data.frame(
+            gene_id = sp_info$gene_id,
+            gene_name = sp_info$gene_name,
+            display = ifelse(
+              !is.na(sp_info$gene_name) & sp_info$gene_name != "",
+              paste0(sp_info$gene_name, " (", sp_info$gene_id, ")"),
+              sp_info$gene_id
+            ),
+            expression_id = sp_info$expression_id,
+            stringsAsFactors = FALSE
+          )
+          result$genes_by_species[[sp]] <- genes_df
+        }
+      }
+    } else {
+      result$source <- "gene_lookup_no_orthogroup"
+      genes_df <- data.frame(
+        gene_id = gene_id,
+        gene_name = if (!is.na(match_info$gene_name)) as.character(match_info$gene_name) else "",
+        display = if (!is.na(match_info$gene_name) && match_info$gene_name != "")
+          paste0(match_info$gene_name, " (", gene_id, ")")
+        else gene_id,
+        expression_id = actual_gene_id,
+        stringsAsFactors = FALSE
+      )
+      result$genes_by_species[[match_species]] <- genes_df
     }
   }
 

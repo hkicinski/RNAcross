@@ -11,6 +11,9 @@ server <- function(input, output, session) {
   # Theme state
   is_dark <- reactiveVal(FALSE)
   containers_update_needed <- reactiveVal(TRUE)
+  
+  # Initialize the interactive aesthetic editor
+  rv_plot_aesthetics <- setup_interactive_editor(input, output, session)
 
   # centralized container management
   manage_combined_containers <- function(config) {
@@ -351,6 +354,13 @@ server <- function(input, output, session) {
     encoding_multigene_color = "species",
     encoding_multigene_secondary = "linetype",
     gene_palette = "Set2",
+
+    # similarity search encoding
+    encoding_similarity_color = "species",
+    encoding_similarity_secondary = "linetype",
+    similarity_palette = "Set2",
+    similarity_gene_colors = list(),
+    updating_similarity_colors_from_palette = FALSE,
 
     # heatmap settings
     heatmap_palette = "viridis",
@@ -754,8 +764,7 @@ server <- function(input, output, session) {
   observe({
     req(input$gene_list, input$group_viz_type == "bar")
 
-    # Parse gene list from textarea
-    gene_list <- strsplit(trimws(input$gene_list), "[\n\r]+")[[1]]
+    gene_list <- strsplit(trimws(input$gene_list), "[,;[:space:]]+")[[1]]
     gene_list <- gene_list[gene_list != ""]
 
     updateSelectizeInput(
@@ -917,7 +926,7 @@ server <- function(input, output, session) {
       {
         if (input$pca_type == "single") {
           species_data <- get_species_data(input$pca_species)
-          lcpm_data <- get_expression_matrix(input$pca_species, input$global_transform, species_data)
+          lcpm_data <- get_expression_matrix(input$pca_species, plot_settings$global_transform, species_data)
           sample_info <- if (input$pca_species == "cg") species_data$sample_info else species_data[[paste0(input$pca_species, "_sample_info")]]
 
           if (is.null(lcpm_data) || is.null(sample_info)) {
@@ -942,7 +951,7 @@ server <- function(input, output, session) {
             aggregation_method = aggregation_method,
             species_config = current_species_config(),
             all_species_data_obj = get_all_species_data(),
-            transform_type = input$global_transform,
+            transform_type = plot_settings$global_transform,
             plot_settings = reactiveValuesToList(plot_settings)
           )
 
@@ -1264,7 +1273,45 @@ server <- function(input, output, session) {
           )
         ),
 
-        # tab 2: multi-gene plots
+        # tab 2: similarity
+        tabPanel(
+          "Similarity",
+          icon = icon("search"),
+          div(
+            style = "padding: 15px;",
+            h5("Graph Color Encoding"),
+            radioButtons("settings_similarity_color", "Color represents:",
+              choices = c("Species" = "species", "Gene" = "gene"),
+              selected = isolate(plot_settings$encoding_similarity_color %||% "species"),
+              inline = TRUE
+            ),
+            radioButtons("settings_similarity_secondary", "Secondary encoding:",
+              choices = c("Linetype" = "linetype", "Shape" = "shape", "Linetype + Shape" = "both", "None" = "none"),
+              selected = isolate(plot_settings$encoding_similarity_secondary %||% "linetype"),
+              inline = TRUE
+            ),
+            conditionalPanel(
+              condition = "input.settings_similarity_color == 'gene'",
+              selectInput("settings_similarity_palette", "Gene color palette:",
+                choices = c("Set1", "Set2", "Dark2", "Paired", "Accent", "Okabe-Ito"),
+                selected = isolate(plot_settings$similarity_palette %||% "Set2")
+              ),
+              hr(),
+              h6("Per-Gene Colors"),
+              p(class = "text-muted", "Click to customize individual gene colors"),
+              uiOutput("similarity_gene_color_pickers")
+            ),
+            hr(),
+            h6("Appearance"),
+            fluidRow(
+              column(4, numericInput("settings_similarity_line_width", "Line Width:", value = isolate(plot_settings$similarity_line_width %||% 2), min = 1, max = 10, step = 1)),
+              column(4, numericInput("settings_similarity_marker_size", "Point Size:", value = isolate(plot_settings$similarity_marker_size %||% 6), min = 1, max = 20, step = 1)),
+              column(4, numericInput("settings_similarity_opacity", "Opacity:", value = isolate(plot_settings$similarity_opacity %||% 0.6), min = 0.1, max = 1.0, step = 0.1))
+            )
+          )
+        ),
+
+        # tab 3: multi-gene plots
         tabPanel(
           "Multi-Gene",
           icon = icon("chart-line"),
@@ -1576,6 +1623,7 @@ server <- function(input, output, session) {
 
   # Gene Color Pickers Implementation
   output$gene_color_pickers <- renderUI({
+    input$show_settings # Force re-evaluation on modal open
     req(gene_group_state$ready, gene_group_state$data)
 
     # Extract unique genes
@@ -1631,6 +1679,55 @@ server <- function(input, output, session) {
         )
       })
 
+      do.call(tagList, picker_list)
+    })
+  })
+
+  # Similarity Gene Color Pickers Implementation
+  output$similarity_gene_color_pickers <- renderUI({
+    input$show_settings # Force re-evaluation on modal open
+    req(similarity_results())
+    
+    top_genes <- similarity_results()$table %>% group_by(Target) %>% slice_head(n = input$similarity_top_matches[1]) %>% pull(gene_id)
+    matches <- similarity_results()$plot_data %>% filter(type == "match", gene_id %in% top_genes)
+    unique_labels <- unique(paste0(matches$label, " (", matches$target_species, ")"))
+    if (length(unique_labels) == 0) return(NULL)
+    
+    unique_labels <- stringr::str_sort(unique_labels, numeric = TRUE)
+    
+    isolate({
+      current_colors <- plot_settings$similarity_gene_colors
+      if (is.null(current_colors)) current_colors <- list()
+      
+      defaults <- get_palette_colors(plot_settings$similarity_palette %||% "Dark2", length(unique_labels))
+      names(defaults) <- unique_labels
+      
+      updated_colors <- current_colors
+      changed <- FALSE
+      for (lbl in unique_labels) {
+        if (is.null(updated_colors[[lbl]])) {
+          updated_colors[[lbl]] <- defaults[[lbl]]
+          changed <- TRUE
+        }
+      }
+      if (changed) {
+        plot_settings$similarity_gene_colors <- updated_colors
+      }
+      
+      picker_list <- lapply(unique_labels, function(lbl) {
+        input_id <- paste0("sim_gene_color_", gsub("[^a-zA-Z0-9]", "_", lbl))
+        col <- updated_colors[[lbl]]
+        
+        div(
+          style = "display: block; margin: 5px; width: 100%;",
+          colourpicker::colourInput(
+            input_id,
+            label = lbl,
+            value = col,
+            showColour = "background"
+          )
+        )
+      })
       do.call(tagList, picker_list)
     })
   })
@@ -1694,6 +1791,53 @@ server <- function(input, output, session) {
 
   observeEvent(input$settings_multigene_color, {
     plot_settings$encoding_multigene_color <- input$settings_multigene_color
+  })
+
+  observeEvent(input$settings_similarity_color, {
+    plot_settings$encoding_similarity_color <- input$settings_similarity_color
+  })
+
+  observeEvent(input$settings_similarity_secondary, {
+    plot_settings$encoding_similarity_secondary <- input$settings_similarity_secondary
+  })
+
+  observeEvent(input$settings_similarity_palette, {
+    plot_settings$similarity_palette <- input$settings_similarity_palette
+    
+    # Update individual pickers
+    req(similarity_results())
+    
+    top_genes <- similarity_results()$table %>% group_by(Target) %>% slice_head(n = input$similarity_top_matches[1]) %>% pull(gene_id)
+    matches <- similarity_results()$plot_data %>% filter(type == "match", gene_id %in% top_genes)
+    unique_labels <- unique(paste0(matches$label, " (", matches$target_species, ")"))
+    if (length(unique_labels) == 0) return()
+    unique_labels <- stringr::str_sort(unique_labels, numeric = TRUE)
+    
+    new_colors <- get_palette_colors(input$settings_similarity_palette, length(unique_labels))
+    names(new_colors) <- unique_labels
+    
+    plot_settings$similarity_gene_colors <- as.list(new_colors)
+    plot_settings$updating_similarity_colors_from_palette <- TRUE
+    
+    for (lbl in unique_labels) {
+      input_id <- paste0("sim_gene_color_", gsub("[^a-zA-Z0-9]", "_", lbl))
+      colourpicker::updateColourInput(session, input_id, value = new_colors[[lbl]])
+    }
+    later::later(function() {
+      plot_settings$updating_similarity_colors_from_palette <- FALSE
+    }, delay = 0.3)
+  })
+
+  observeEvent(input$settings_similarity_line_width, {
+    plot_settings$similarity_line_width <- input$settings_similarity_line_width
+  })
+
+  observeEvent(input$settings_similarity_marker_size, {
+    plot_settings$similarity_marker_size <- input$settings_similarity_marker_size
+  })
+
+  observeEvent(input$settings_similarity_opacity, {
+    plot_settings$similarity_opacity <- input$settings_similarity_opacity
   })
 
   observeEvent(input$settings_multigene_secondary, {
@@ -2046,10 +2190,52 @@ server <- function(input, output, session) {
     }
 
     if (!is.null(found_in_species)) {
-      # Show orthogroup container
+      combined_source <- query_results$combined$source
+
+      if (!is.null(combined_source) && combined_source == "gene_lookup_no_orthogroup") {
+        shinyjs::hide("combined_orthogroup_container")
+
+        container_selector <- "#combined_orthogroup_selection_wrapper"
+        removeUI(selector = paste0(container_selector, " > *"), multiple = TRUE, immediate = TRUE)
+        insertUI(
+          selector = container_selector,
+          where = "afterBegin",
+          ui = div(
+            class = "alert alert-warning mt-3",
+            icon("exclamation-circle"),
+            strong(paste(gene, "is not assigned to an orthogroup.")),
+            br(),
+            "Cross-species comparison requires orthology data.",
+            br(), br(),
+            actionLink("combined_goto_single_species", "Go to Single Species View",
+              class = "alert-link"
+            )
+          ),
+          immediate = TRUE
+        )
+
+        shinyjs::show("combined_orthogroup_container")
+        waiter_hide()
+        return()
+      }
+
+      if (!is.null(combined_source) && combined_source == "synteny_aided") {
+        container_selector <- "#combined_orthogroup_selection_wrapper"
+        removeUI(selector = paste0(container_selector, " > *"), multiple = TRUE, immediate = TRUE)
+        insertUI(
+          selector = container_selector,
+          where = "afterBegin",
+          ui = div(
+            class = "alert alert-info py-2 mb-3",
+            icon("link"),
+            " Orthology based on synteny (YGOB/CGOB), not OrthoFinder."
+          ),
+          immediate = TRUE
+        )
+      }
+
       shinyjs::show("combined_orthogroup_container")
 
-      # Get current configuration
       config <- current_species_config()
 
       # Create selection UI for each species
@@ -2251,6 +2437,25 @@ server <- function(input, output, session) {
     waiter_hide()
   })
 
+  observeEvent(input$combined_goto_single_species, {
+    req(global_query_state$query_result)
+    result <- global_query_state$query_result
+    species_list <- names(result$genes_by_species)
+    if (length(species_list) > 0) {
+      first_species <- species_list[1]
+      updateTabsetPanel(session, "nav", selected = "species_analysis_container")
+      shinyjs::delay(100, {
+        updateTabsetPanel(session, "species_tabs", selected = first_species)
+        updateTextInput(session, paste0(first_species, "_genename"),
+          value = global_query_state$current_query
+        )
+        shinyjs::delay(100, {
+          shinyjs::click(paste0(first_species, "_search_button"))
+        })
+      })
+    }
+  })
+
   # track created observers for cleanup
   if (is.null(session$userData$created_species_observers)) {
     session$userData$created_species_observers <- character(0)
@@ -2392,11 +2597,13 @@ server <- function(input, output, session) {
             }
           })
 
-          # update orthogroup results table
           output[[paste0(species_id, "_orthogroup_results")]] <- renderDT({
+            if (!is.null(gene_result$source) && gene_result$source == "gene_lookup_no_orthogroup") {
+              return(NULL)
+            }
+
             config <- current_species_config()
 
-            # collect data in list first, then combine once
             ortho_list <- lapply(names(gene_result$genes_by_species), function(sp) {
               sp_data <- gene_result$genes_by_species[[sp]]
               if (nrow(sp_data) == 0) {
@@ -2412,6 +2619,12 @@ server <- function(input, output, session) {
             if (nrow(ortho_data) > 0) {
               ortho_data <- ortho_data[order(ortho_data$Current, decreasing = TRUE), ]
 
+              cap_text <- if (!is.null(gene_result$source) && gene_result$source == "synteny_aided") {
+                "Synteny-aided orthologs (YGOB/CGOB)"
+              } else {
+                NULL
+              }
+
               dt <- datatable(
                 ortho_data[, c("Species", "gene_id", "gene_name")],
                 options = list(
@@ -2420,7 +2633,8 @@ server <- function(input, output, session) {
                   scrollX = TRUE
                 ),
                 colnames = c("Species", "Gene ID", "Gene Name"),
-                rownames = FALSE
+                rownames = FALSE,
+                caption = cap_text
               ) %>%
                 formatStyle("Species", fontStyle = "italic")
 
@@ -2905,7 +3119,7 @@ server <- function(input, output, session) {
     req(input$ortholog_gene_list)
     waiter_show(html = loading_screen)
 
-    gene_list <- unlist(strsplit(input$ortholog_gene_list, "[\n\r,;]+"))
+    gene_list <- unlist(strsplit(input$ortholog_gene_list, "[,;[:space:]]+"))
     gene_list <- trimws(gene_list)
     gene_list <- gene_list[gene_list != ""]
 
@@ -3083,7 +3297,7 @@ server <- function(input, output, session) {
               is_gene_line <- TRUE
             } else {
               # gene line
-              genes <- strsplit(line, "[,;\\s]+")[[1]]
+              genes <- strsplit(line, "[,;[:space:]]+")[[1]]
               genes <- trimws(genes)
               genes <- genes[genes != ""]
               all_genes <- c(all_genes, genes)
@@ -3097,7 +3311,7 @@ server <- function(input, output, session) {
       # fallback to regular gene list
       if (is.null(gene_list) || length(gene_list) == 0) {
         if (!is.null(input$gene_list) && nchar(trimws(input$gene_list)) > 0) {
-          genes <- strsplit(trimws(input$gene_list), "[\n\r]+")[[1]]
+          genes <- strsplit(trimws(input$gene_list), "[,;[:space:]]+")[[1]]
           gene_list <- genes[genes != ""]
         }
       }
@@ -3286,7 +3500,7 @@ server <- function(input, output, session) {
 
     # get current gene list
     gene_list <- if (!is.null(input$gene_list) && nchar(trimws(input$gene_list)) > 0) {
-      genes <- strsplit(trimws(input$gene_list), "[\n\r]+")[[1]]
+      genes <- strsplit(trimws(input$gene_list), "[,;[:space:]]+")[[1]]
       genes[genes != ""]
     } else {
       NULL
@@ -3356,6 +3570,14 @@ server <- function(input, output, session) {
     ))
 
     output$ortholog_mapping_modal_table <- renderDT({
+      display_colnames <- colnames(mapping_table)
+      for (i in seq_along(display_colnames)) {
+        if (grepl("_Ortholog$", display_colnames[i])) {
+          short_name <- gsub("_Ortholog$", "", display_colnames[i])
+          display_colnames[i] <- paste0("<i>", short_name, "</i> Ortholog")
+        }
+      }
+
       datatable(
         mapping_table,
         options = list(
@@ -3363,7 +3585,9 @@ server <- function(input, output, session) {
           scrollX = TRUE,
           dom = "Bfrtip"
         ),
-        rownames = FALSE
+        colnames = display_colnames,
+        rownames = FALSE,
+        escape = FALSE
       )
     })
   })
@@ -3443,7 +3667,7 @@ server <- function(input, output, session) {
           current_pathway <- line
         } else {
           # this line contains genes (split on comma, semicolon, or whitespace)
-          genes <- strsplit(line, "[,;\\s]+")[[1]]
+          genes <- strsplit(line, "[,;[:space:]]+")[[1]]
           genes <- trimws(genes)
           genes <- genes[genes != ""]
           current_genes <- c(current_genes, genes)
@@ -3508,6 +3732,29 @@ server <- function(input, output, session) {
         },
         ignoreInit = TRUE
       )
+    })
+  })
+
+  sim_gene_color_obs_manager <- reactiveValues(observers = list())
+  
+  observeEvent(similarity_results(), {
+    lapply(sim_gene_color_obs_manager$observers, function(o) o$destroy())
+    sim_gene_color_obs_manager$observers <- list()
+    
+    req(similarity_results())
+    top_genes <- similarity_results()$table %>% group_by(Target) %>% slice_head(n = input$similarity_top_matches[1]) %>% pull(gene_id)
+    matches <- similarity_results()$plot_data %>% filter(type == "match", gene_id %in% top_genes)
+    unique_labels <- unique(paste0(matches$label, " (", matches$target_species, ")"))
+    if (length(unique_labels) == 0) return()
+    
+    sim_gene_color_obs_manager$observers <- lapply(unique_labels, function(lbl) {
+      input_id <- paste0("sim_gene_color_", gsub("[^a-zA-Z0-9]", "_", lbl))
+      observeEvent(input[[input_id]], {
+        val <- input[[input_id]]
+        if (!is.null(val) && !isTRUE(plot_settings$updating_similarity_colors_from_palette)) {
+          plot_settings$similarity_gene_colors[[lbl]] <- val
+        }
+      }, ignoreInit = TRUE)
     })
   })
 
@@ -3800,8 +4047,8 @@ server <- function(input, output, session) {
           gene_list <- input$gene_list
           if (!is.null(gene_list) && length(gene_list) > 0 && nchar(trimws(gene_list)) > 0) {
             gene_list <- trimws(gene_list)
-            genes <- strsplit(gene_list, "[\n\r]+")[[1]]
-            genes <- genes[genes != ""] # Remove empty lines
+            genes <- strsplit(gene_list, "[,;[:space:]]+")[[1]]
+            genes <- genes[genes != ""]
             data.frame(
               group_name = "Custom Group",
               group_member = genes
@@ -4103,22 +4350,22 @@ server <- function(input, output, session) {
 
           # Construct mapping
           # Initialize ggplot with base aesthetics
-          p <- ggplot(plot_data, aes_string(
-            x = "Timepoint",
-            y = "Expression",
-            color = color_col,
-            group = "interaction(GeneID, Species, Replicate)"
+          p <- ggplot(plot_data, aes(
+            x = Timepoint,
+            y = Expression,
+            color = .data[[color_col]],
+            group = interaction(GeneID, Species, Replicate)
           ))
 
           # Add secondary aesthetics if defined
           if (!is.null(aes_config$linetype_var)) {
             linetype_col <- if (aes_config$linetype_var == "species") "Species" else "GeneLabel"
-            p <- p + aes_string(linetype = linetype_col)
+            p <- p + aes(linetype = .data[[linetype_col]])
             plot_data[[linetype_col]] <- factor(plot_data[[linetype_col]])
           }
           if (!is.null(aes_config$shape_var)) {
             shape_col <- if (aes_config$shape_var == "species") "Species" else "GeneLabel"
-            p <- p + aes_string(shape = shape_col)
+            p <- p + aes(shape = .data[[shape_col]])
             plot_data[[shape_col]] <- factor(plot_data[[shape_col]])
           }
 
@@ -4129,7 +4376,7 @@ server <- function(input, output, session) {
             "<br>Time:", plot_data$Timepoint,
             "<br>Value:", round(plot_data$Expression, 2)
           )
-          p <- p + aes_string(text = "HoverText")
+          p <- p + aes(text = HoverText)
 
           # Add geometries and update data
           # Note: We updated plot_data columns (factors/hover), so we need to ensure ggplot uses the updated data
@@ -4177,12 +4424,28 @@ server <- function(input, output, session) {
             p <- p + scale_shape_manual(values = aes_config$shape_values)
           }
 
+          # Get current custom styles
+          custom_styles <- reactiveValuesToList(rv_plot_aesthetics)$styles
+          
           ggplotly(p, tooltip = "text") %>%
             layout(
               plot_bgcolor = if (is_dark()) "#2c3034" else "white",
               paper_bgcolor = if (is_dark()) "#2c3034" else "white",
               font = list(color = if (is_dark()) "white" else "black")
-            )
+            ) %>%
+            htmlwidgets::onRender(paste0("
+              function(el, x) {
+                if (window.initInteractiveEditor) {
+                  window.initInteractiveEditor(el);
+                  
+                  // Re-apply saved semantic styles
+                  var savedStyles = ", jsonlite::toJSON(custom_styles, auto_unbox = TRUE), ";
+                  if (Object.keys(savedStyles).length > 0 && window.applySavedAesthetics) {
+                      window.applySavedAesthetics(el, savedStyles);
+                  }
+                }
+              }
+            "))
         } else if (params$viz_type == "heatmap") {
           # get heatmap palette from settings
           hm_palette <- plot_settings$heatmap_palette
@@ -4798,40 +5061,100 @@ server <- function(input, output, session) {
     }
 
     if (!is.null(query_result)) {
-      # Store the result globally
       global_query_state$query_result <- query_result
 
-      # Show the results containers
       shinyjs::show("gene_explorer_results")
       shinyjs::show("query_status_container")
 
-      # Update query status
+      is_orphan <- !is.null(query_result$source) && query_result$source == "gene_lookup_no_orthogroup"
+      is_synteny <- !is.null(query_result$source) && query_result$source == "synteny_aided"
+
       output$query_status <- renderUI({
-        div(
-          class = "alert alert-success",
-          icon("check-circle"),
-          strong("Query successful!"),
-          br(),
-          paste("Found", query, "in orthogroup", query_result$orthogroup),
-          br(),
-          tags$small(
-            "Species with orthologs: ",
-            paste(sapply(names(query_result$genes_by_species), function(sp) {
-              config[[sp]]$short # Use local config variable instead of SPECIES_CONFIG
-            }), collapse = ", ")
+        if (is_orphan) {
+          div(
+            class = "alert alert-warning",
+            icon("exclamation-triangle"),
+            strong(paste(query, "found")),
+            br(),
+            "This gene is not assigned to any orthogroup. Single-species analysis tools are available.",
+            br(),
+            tags$small(
+              "Species: ",
+              paste(sapply(names(query_result$genes_by_species), function(sp) {
+                config[[sp]]$short
+              }), collapse = ", ")
+            )
           )
-        )
+        } else if (is_synteny) {
+          div(
+            class = "alert alert-info",
+            icon("link"),
+            strong("Query successful!"),
+            br(),
+            paste("Found", query, "via synteny-aided orthology (YGOB/CGOB)"),
+            br(),
+            tags$small(
+              "Species with syntenic orthologs: ",
+              paste(sapply(names(query_result$genes_by_species), function(sp) {
+                config[[sp]]$short
+              }), collapse = ", ")
+            )
+          )
+        } else {
+          div(
+            class = "alert alert-success",
+            icon("check-circle"),
+            strong("Query successful!"),
+            br(),
+            paste("Found", query, "in orthogroup", query_result$orthogroup),
+            br(),
+            tags$small(
+              "Species with orthologs: ",
+              paste(sapply(names(query_result$genes_by_species), function(sp) {
+                config[[sp]]$short
+              }), collapse = ", ")
+            )
+          )
+        }
       })
 
-      if (!is.null(query_result$og_id)) {
-        tree <- load_gene_tree(query_result$og_id, current_data) # Pass current_data
+      if (is_orphan) {
+        global_query_state$tree_data <- NULL
+        output$phylo_tree_plot_ui <- renderUI({
+          plotOutput("phylo_tree_plot", height = "400px")
+        })
+        output$phylo_tree_plot <- renderPlot(
+          {
+            plot.new()
+            text(0.5, 0.5, "Unassigned Gene\nNo Phylogenetic Tree Available",
+              cex = 1.4, col = if (is_dark()) "#ffc107" else "#856404", font = 2
+            )
+          },
+          bg = if (is_dark()) "#2c3034" else "white",
+          res = 120
+        )
+      } else if (is_synteny) {
+        global_query_state$tree_data <- NULL
+        output$phylo_tree_plot_ui <- renderUI({
+          plotOutput("phylo_tree_plot", height = "400px")
+        })
+        output$phylo_tree_plot <- renderPlot(
+          {
+            plot.new()
+            text(0.5, 0.5, "No Phylogenetic Tree Available\nOrthology based on synteny (YGOB/CGOB)",
+              cex = 1.2, col = if (is_dark()) "#6ea8fe" else "#0d6efd", font = 2
+            )
+          },
+          bg = if (is_dark()) "#2c3034" else "white",
+          res = 120
+        )
+      } else if (!is.null(query_result$og_id) && !is.na(query_result$og_id)) {
+        tree <- load_gene_tree(query_result$og_id, current_data)
         global_query_state$tree_data <- tree
 
-        # Dynamic UI for the tree plot
         output$phylo_tree_plot_ui <- renderUI({
           if (!is.null(tree)) {
             n_tips <- length(tree$tip.label)
-            # Calculate height based on number of tips (minimum 400px, 30px per tip)
             plot_height <- max(400, min(900, n_tips * 30))
             plotOutput("phylo_tree_plot", height = paste0(plot_height, "px"))
           } else {
@@ -4855,12 +5178,71 @@ server <- function(input, output, session) {
         )
       }
 
-      # update orthogroup summary
       output$orthogroup_summary <- renderUI({
         create_orthogroup_summary(query_result, config)
       })
 
-      # update orthogroup table with enhanced formatting
+      output$explorer_quick_actions <- renderUI({
+        disabled_msg <- "This gene is not assigned to an orthogroup. Cross-species tools require orthology data."
+        div(
+          class = "mt-4",
+          h5("Quick Actions"),
+          actionButton(
+            "explore_species_view",
+            "View in Single Species View",
+            icon = icon("chart-line"),
+            class = "btn btn-secondary w-100 mb-2"
+          ),
+          if (is_orphan) {
+            tagList(
+              tags$button(
+                type = "button",
+                class = "btn btn-secondary w-100 mb-2",
+                disabled = "disabled",
+                style = "opacity: 0.45; cursor: not-allowed;",
+                title = disabled_msg,
+                icon("layer-group"), " View in Comparative Analysis"
+              ),
+              tags$button(
+                type = "button",
+                class = "btn btn-secondary w-100",
+                disabled = "disabled",
+                style = "opacity: 0.45; cursor: not-allowed;",
+                title = disabled_msg,
+                icon("th"), " Generate Cross-Species Heatmap"
+              )
+            )
+          } else {
+            tagList(
+              actionButton(
+                "explore_combined_view",
+                "View in Comparative Analysis",
+                icon = icon("layer-group"),
+                class = "btn btn-secondary w-100 mb-2"
+              ),
+              actionButton(
+                "explore_heatmap",
+                "Generate Cross-Species Heatmap",
+                icon = icon("th"),
+                class = "btn btn-secondary w-100"
+              )
+            )
+          }
+        )
+      })
+
+      output$explorer_orthogroup_section <- renderUI({
+        if (is_orphan) {
+          NULL
+        } else {
+          div(
+            class = "mt-4",
+            h5(if (is_synteny) "Synteny-Aided Orthologs" else "Orthogroup Members"),
+            DTOutput("explorer_orthogroup_table")
+          )
+        }
+      })
+
       output$explorer_orthogroup_table <- renderDT({
         create_orthogroup_details_table(query_result, config)
       })
@@ -5817,6 +6199,225 @@ server <- function(input, output, session) {
       }
     }
   )
+
+  # ==========================================
+  # Find Similar Profiles (Gene Shape-Search)
+  # ==========================================
+  
+  observe({
+    config <- current_species_config()
+    req(config)
+    
+    choices <- setNames(names(config), sapply(names(config), function(id) {
+      config[[id]]$name
+    }))
+    
+    updateSelectizeInput(session, "similarity_ref_species", choices = choices)
+    
+    updateCheckboxGroupInput(
+      session, 
+      "similarity_tgt_species", 
+      choiceNames = lapply(names(config), function(id) HTML(paste0("<i>", config[[id]]$name, "</i>"))),
+      choiceValues = names(config)
+    )
+  })
+
+  similarity_results <- reactiveVal(NULL)
+  
+  observeEvent(input$similarity_search_button, {
+    req(input$similarity_gene_input, input$similarity_ref_species, input$similarity_tgt_species)
+    
+    query_gene <- trimws(input$similarity_gene_input)
+    if (query_gene == "") return()
+    
+    withProgress(message = 'Running similarity search...', value = 0, {
+      tryCatch({
+        all_data <- get_all_species_data()
+        all_results_table <- list()
+        all_plot_data <- list()
+        
+        for (tgt in input$similarity_tgt_species) {
+          incProgress(1/length(input$similarity_tgt_species), detail = paste("Processing", tgt))
+          
+          res <- run_similarity_search(
+            query_gene_name = query_gene,
+            ref_species = input$similarity_ref_species,
+            tgt_species = tgt,
+            top_x = input$similarity_top_matches[2],
+            all_species_data = all_data
+          )
+          
+          res$table$Target <- tgt
+          res$plot_data$target_species <- ifelse(res$plot_data$type == "match", tgt, input$similarity_ref_species)
+          
+          all_results_table[[tgt]] <- res$table
+          all_plot_data[[tgt]] <- res$plot_data %>% filter(type == "match")
+          
+          # Save the first target's query trajectory for the plot overlay
+          if (tgt == input$similarity_tgt_species[1]) {
+            query_plot_data <- res$plot_data %>% filter(type == "query")
+          }
+        }
+        
+        combined_table <- bind_rows(all_results_table) %>% arrange(desc(pearson_r))
+        combined_plot_data <- bind_rows(query_plot_data, bind_rows(all_plot_data))
+        
+        # Ensure Timepoint is a factor with proper chronological order and sort the data so lines connect correctly
+        combined_plot_data$Timepoint <- factor(combined_plot_data$Timepoint, levels = TIME_POINTS)
+        combined_plot_data <- combined_plot_data %>% arrange(gene_id, Timepoint)        
+        similarity_results(list(
+          table = combined_table,
+          plot_data = combined_plot_data
+        ))
+      }, error = function(e) {
+        showNotification(paste("Search failed:", e$message), type = "error")
+        similarity_results(NULL)
+      })
+    })
+  })
+
+  output$similarity_plot <- renderPlotly({
+    req(similarity_results())
+    
+    current_settings <- reactiveValuesToList(plot_settings)
+    
+    plot_data <- similarity_results()$plot_data
+    
+    # Filter the matches for the graph based on the top N gene IDs PER SPECIES
+    top_genes <- similarity_results()$table %>% group_by(Target) %>% slice_head(n = input$similarity_top_matches[1]) %>% pull(gene_id)
+    
+    matches <- plot_data %>% 
+      filter(type == "match", gene_id %in% top_genes) %>%
+      mutate(plot_label = label)
+    
+    p <- plot_ly()
+    
+    if (nrow(matches) > 0) {
+      unique_labels <- unique(matches$plot_label)
+      color_map <- character(length(unique_labels))
+      names(color_map) <- unique_labels
+      linetype_map <- character(length(unique_labels))
+      names(linetype_map) <- unique_labels
+      symbol_map <- character(length(unique_labels))
+      names(symbol_map) <- unique_labels
+      
+      plotly_linetypes <- c("solid", "dash", "dot", "longdash", "dashdot", "longdashdot")
+      plotly_symbols <- c("circle", "square", "diamond", "cross", "x", "triangle-up", "star")
+      unique_species <- unique(matches$target_species)
+      config <- current_species_config()
+      
+      sec <- current_settings$encoding_similarity_secondary
+      if (is.null(sec)) sec <- "linetype"
+      
+      for (i in seq_along(unique_labels)) {
+        lbl <- unique_labels[i]
+        sp_code <- matches$target_species[matches$plot_label == lbl][1]
+        sp_short <- if(!is.null(config[[sp_code]])) config[[sp_code]]$short else sp_code
+        sp_idx <- which(unique_species == sp_code)
+        
+        # Color resolution
+        if (current_settings$encoding_similarity_color == "species") {
+          color_map[lbl] <- resolve_species_color(sp_short, current_settings$species_colors)
+          
+          lbl_idx <- which(unique_labels[sapply(unique_labels, function(x) matches$target_species[matches$plot_label == x][1] == sp_code)] == lbl)
+          linetype_map[lbl] <- if (sec %in% c("linetype", "both")) plotly_linetypes[((lbl_idx - 1) %% length(plotly_linetypes)) + 1] else "solid"
+          symbol_map[lbl] <- if (sec %in% c("shape", "both")) plotly_symbols[((lbl_idx - 1) %% length(plotly_symbols)) + 1] else "circle"
+          
+        } else {
+          if (!is.null(current_settings$similarity_gene_colors[[lbl]])) {
+            color_map[lbl] <- current_settings$similarity_gene_colors[[lbl]]
+          } else {
+            gene_colors <- get_palette_colors(current_settings$similarity_palette, length(unique_labels))
+            color_map[lbl] <- gene_colors[i]
+          }
+          
+          linetype_map[lbl] <- if (sec %in% c("linetype", "both")) plotly_linetypes[((sp_idx - 1) %% length(plotly_linetypes)) + 1] else "solid"
+          
+          if (sec %in% c("shape", "both")) {
+            pch_val <- resolve_species_shape(sp_short, current_settings$species_shapes)
+            pch_to_plotly_symbol <- function(pch) {
+              pch <- as.integer(pch); if (pch == 16) return("circle"); if (pch == 17) return("triangle-up"); if (pch == 15) return("square"); if (pch == 18) return("diamond"); if (pch == 8) return("star"); if (pch == 3) return("cross"); if (pch == 4) return("x"); return("circle")
+            }
+            symbol_map[lbl] <- pch_to_plotly_symbol(pch_val)
+          } else {
+            symbol_map[lbl] <- "circle"
+          }
+        }
+      }
+
+      p <- matches %>%
+        group_by(plot_label) %>%
+        plot_ly(x = ~Timepoint, y = ~consensus_z, 
+                color = ~plot_label, colors = color_map,
+                linetype = ~plot_label, linetypes = linetype_map,
+                symbol = ~plot_label, symbols = symbol_map,
+                type = 'scatter', mode = 'lines+markers',
+                line = list(width = current_settings$similarity_line_width %||% 2),
+                marker = list(size = current_settings$similarity_marker_size %||% 6),
+                opacity = current_settings$similarity_opacity %||% 0.6)
+    }
+    
+    query_data <- plot_data %>% filter(type == "query")
+    if (nrow(query_data) > 0) {
+      p <- p %>% add_trace(data = query_data, x = ~Timepoint, y = ~consensus_z,
+                     type = 'scatter', mode = 'lines+markers',
+                     name = query_data$label[1],
+                     inherit = FALSE,
+                     line = list(color = "black", width = 4, dash = "dash"),
+                     marker = list(color = "black", size = 8),
+                     opacity = 1)
+    }
+                   
+    p <- p %>% layout(
+      title = "Temporal Profile Similarity Overlay",
+      xaxis = list(title = "Timepoint", categoryorder = "array", categoryarray = TIME_POINTS),
+      yaxis = list(title = "Consensus Z-Score"),
+      hovermode = "closest"
+    )
+    
+    p
+  })
+  
+  output$similarity_table <- renderDT({
+    req(similarity_results())
+    
+    dt <- datatable(
+      similarity_results()$table %>% select(Target, gene_id, gene_name, pearson_r, null_percentile, perm_p_value),
+      options = list(
+        pageLength = 10,
+        scrollX = TRUE,
+        dom = 'Bfrtip',
+        buttons = c('csv', 'excel'),
+        headerCallback = JS(
+          "function(thead, data, start, end, display) {",
+          "  var $th = $(thead).find('th');",
+          "  $th.eq(3).attr('title', 'Pearson correlation coefficient measuring similarity of temporal expression profiles.');",
+          "  $th.eq(4).attr('title', 'Percentile rank compared to 1000 randomly selected genes from the target species (e.g. 99 means top 1%).');",
+          "  $th.eq(5).attr('title', 'Empirical P-Value calculated by randomly permuting the target gene\\'s timepoints 1000 times. Lower values indicate the shape similarity is less likely due to chance.');",
+          "}"
+        )
+      ),
+      extensions = 'Buttons',
+      rownames = FALSE,
+      colnames = c("Target", "Gene ID", "Gene Name", "Pearson R", "Null Pctl", "Perm P-Val")
+    )
+    
+    config <- current_species_config()
+    current_settings <- reactiveValuesToList(plot_settings)
+    
+    targets <- unique(similarity_results()$table$Target)
+    bg_colors <- sapply(targets, function(sp_code) {
+      sp_short <- if(!is.null(config[[sp_code]])) config[[sp_code]]$short else sp_code
+      resolve_species_color(sp_short, current_settings$species_colors)
+    })
+    
+    dt %>% formatStyle(
+      'Target',
+      backgroundColor = styleEqual(unname(targets), unname(bg_colors)),
+      color = 'white',
+      fontWeight = 'bold'
+    )
+  })
 
   observeEvent(input$trigger_version_modal, {
     showModal(build_version_modal(app_version_info))
