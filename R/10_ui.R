@@ -531,7 +531,7 @@ ui <- page_navbar(
           var seenVersion = localStorage.getItem("rnacross_seen_version");
           if (seenVersion !== RNACROSS_VERSION) {
             if (window.Shiny && Shiny.setInputValue) {
-              Shiny.setInputValue("trigger_version_modal", Math.random());
+              Shiny.setInputValue("trigger_version_modal", { seen: (seenVersion || ""), rand: Math.random() });
             }
           }
         }, 500);
@@ -560,7 +560,7 @@ ui <- page_navbar(
           var seenVersion = localStorage.getItem("rnacross_seen_version");
           if (seenVersion !== RNACROSS_VERSION) {
             if (window.Shiny && Shiny.setInputValue) {
-              Shiny.setInputValue("trigger_version_modal", Math.random());
+              Shiny.setInputValue("trigger_version_modal", { seen: (seenVersion || ""), rand: Math.random() });
             }
           }
         }, 1000);

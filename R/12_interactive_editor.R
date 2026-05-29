@@ -16,6 +16,7 @@ setup_interactive_editor <- function(input, output, session) {
     current_plot_id = NULL,
     current_trace_name = NULL,
     current_trace_index = NULL,
+    current_values = list(),   # live values of the clicked element, for seeding controls
     styles = list() # Holds the semantic keyed styles
   )
 
@@ -40,6 +41,7 @@ setup_interactive_editor <- function(input, output, session) {
     rv_plot_aesthetics$current_plot_id <- click_data$plot_id
     rv_plot_aesthetics$current_trace_name <- click_data$trace_name
     rv_plot_aesthetics$current_trace_index <- click_data$trace_index
+    rv_plot_aesthetics$current_values <- click_data$current %||% list()
     
     # Show the editor panel
     shinyjs::show("plot_aesthetic_editor")
@@ -79,6 +81,7 @@ setup_interactive_editor <- function(input, output, session) {
       selection_title
     )
     
+    cv <- rv_plot_aesthetics$current_values
     controls_ui <- tagList()
     
     if (grepl("axis", el) || grepl("grid", el)) {
@@ -103,32 +106,61 @@ setup_interactive_editor <- function(input, output, session) {
         )
       }
     } else if (el == "legend") {
+      fams <- c("Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Helvetica", "Open Sans")
       controls_ui <- tagList(
-        selectInput("editor_legend_orientation", "Orientation", choices = c("Vertical" = "v", "Horizontal" = "h")),
-        sliderInput("editor_legend_x", "X Position", min = -0.5, max = 1.5, value = 1.05, step = 0.05),
-        sliderInput("editor_legend_y", "Y Position", min = -0.5, max = 1.5, value = 1, step = 0.05),
-        colourpicker::colourInput("editor_legend_bg", "Background", value = "rgba(255,255,255,0)", showColour = "background")
+        selectInput("editor_legend_orientation", "Orientation",
+                    choices = c("Vertical" = "v", "Horizontal" = "h"),
+                    selected = cv$legend_orientation %||% "v"),
+        sliderInput("editor_legend_x", "X Position", min = -0.5, max = 1.5,
+                    value = cv$legend_x %||% 1.05, step = 0.05),
+        sliderInput("editor_legend_y", "Y Position", min = -0.5, max = 1.5,
+                    value = cv$legend_y %||% 1, step = 0.05),
+        colourpicker::colourInput("editor_legend_bg", "Background",
+                    value = cv$legend_bgcolor %||% "rgba(255,255,255,0)", showColour = "background"),
+
+        tags$hr(), tags$strong("Legend Title Font (\u201cGene\u201d)"),
+        selectInput("editor_legend_title_fontfamily", "Title Font", choices = fams,
+                    selected = cv$legend_title_fontfamily %||% "Arial"),
+        numericInput("editor_legend_title_fontsize", "Title Size", value = cv$legend_title_fontsize %||% 12, min = 6, max = 36),
+        colourpicker::colourInput("editor_legend_title_fontcolor", "Title Color",
+                    value = cv$legend_title_fontcolor %||% "#000000", showColour = "background"),
+        checkboxInput("editor_legend_title_bold", "Bold Title", value = isTRUE(cv$legend_title_bold)),
+
+        tags$hr(), tags$strong("Legend Item Font (gene labels)"),
+        selectInput("editor_legend_item_fontfamily", "Item Font", choices = fams,
+                    selected = cv$legend_item_fontfamily %||% "Arial"),
+        numericInput("editor_legend_item_fontsize", "Item Size", value = cv$legend_item_fontsize %||% 12, min = 6, max = 36),
+        colourpicker::colourInput("editor_legend_item_fontcolor", "Item Color",
+                    value = cv$legend_item_fontcolor %||% "#000000", showColour = "background"),
+        checkboxInput("editor_legend_item_bold", "Bold Labels", value = isTRUE(cv$legend_item_bold))
       )
     } else if (el == "title" || el == "text_element") {
       controls_ui <- tagList(
         textInput("editor_title_text", "Text", value = rv_plot_aesthetics$current_trace_name),
         selectInput("editor_title_fontfamily", "Font Family", choices = c("Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Helvetica", "Open Sans"), selected = "Arial"),
-        numericInput("editor_title_fontsize", "Font Size", value = 14, min = 8, max = 36),
-        colourpicker::colourInput("editor_title_color", "Color", value = "#000000", showColour = "background"),
+        numericInput("editor_title_fontsize", "Font Size", value = cv$title_size %||% 14, min = 8, max = 36),
+        colourpicker::colourInput("editor_title_color", "Color", value = cv$title_color %||% "#000000", showColour = "background"),
         checkboxInput("editor_title_fontbold", "Bold Text", value = FALSE)
       )
     } else if (el == "background") {
       controls_ui <- tagList(
-        colourpicker::colourInput("editor_bg_plot", "Plot Area Color", value = "#FFFFFF", showColour = "background"),
-        colourpicker::colourInput("editor_bg_paper", "Outer Area Color", value = "#FFFFFF", showColour = "background")
+        colourpicker::colourInput("editor_bg_plot", "Plot Area Color", value = cv$bg_plot %||% "#FFFFFF", showColour = "background"),
+        colourpicker::colourInput("editor_bg_paper", "Outer Area Color", value = cv$bg_paper %||% "#FFFFFF", showColour = "background")
       )
     } else if (el == "trace") {
       controls_ui <- tagList(
-        selectInput("editor_trace_mode", "Display Mode", choices = c("Lines & Markers" = "lines+markers", "Lines Only" = "lines", "Markers Only" = "markers")),
-        sliderInput("editor_trace_width", "Line Width", min = 0, max = 10, value = 2, step = 0.5),
-        selectInput("editor_trace_dash", "Line Style", choices = c("Solid" = "solid", "Dashed" = "dash", "Dotted" = "dot", "Dash-Dot" = "dashdot")),
-        sliderInput("editor_trace_markersize", "Marker Size", min = 1, max = 20, value = 6, step = 1),
-        colourpicker::colourInput("editor_trace_color", "Color", value = "#000000", showColour = "background")
+        selectInput("editor_trace_mode", "Display Mode",
+                    choices = c("Lines & Markers" = "lines+markers", "Lines Only" = "lines", "Markers Only" = "markers"),
+                    selected = cv$trace_mode %||% "lines+markers"),
+        sliderInput("editor_trace_width", "Line Width", min = 0, max = 10,
+                    value = cv$trace_width %||% 2, step = 0.5),
+        selectInput("editor_trace_dash", "Line Style",
+                    choices = c("Solid" = "solid", "Dashed" = "dash", "Dotted" = "dot", "Dash-Dot" = "dashdot"),
+                    selected = cv$trace_dash %||% "solid"),
+        sliderInput("editor_trace_markersize", "Marker Size", min = 1, max = 20,
+                    value = cv$trace_markersize %||% 6, step = 1),
+        colourpicker::colourInput("editor_trace_color", "Color",
+                    value = if (length(cv$trace_color) > 0) cv$trace_color[[1]] else "#000000", showColour = "background")
       )
     }
     
@@ -279,6 +311,85 @@ setup_interactive_editor <- function(input, output, session) {
       plot_id = rv_plot_aesthetics$current_plot_id,
       update = list(paper_bgcolor = input$editor_bg_paper)
     ))
+  }, ignoreInit = TRUE)
+
+  # Legend Orientation
+  observeEvent(input$editor_legend_orientation, {
+    req(rv_plot_aesthetics$current_plot_id)
+    session$sendCustomMessage("editor_relayout", list(
+      plot_id = rv_plot_aesthetics$current_plot_id,
+      update = list("legend.orientation" = input$editor_legend_orientation)
+    ))
+  }, ignoreInit = TRUE)
+
+  # Legend X position
+  observeEvent(input$editor_legend_x, {
+    req(rv_plot_aesthetics$current_plot_id)
+    session$sendCustomMessage("editor_relayout", list(
+      plot_id = rv_plot_aesthetics$current_plot_id,
+      update = list("legend.x" = input$editor_legend_x)
+    ))
+  }, ignoreInit = TRUE)
+
+  # Legend Y position
+  observeEvent(input$editor_legend_y, {
+    req(rv_plot_aesthetics$current_plot_id)
+    session$sendCustomMessage("editor_relayout", list(
+      plot_id = rv_plot_aesthetics$current_plot_id,
+      update = list("legend.y" = input$editor_legend_y)
+    ))
+  }, ignoreInit = TRUE)
+
+  # Legend Background
+  observeEvent(input$editor_legend_bg, {
+    req(rv_plot_aesthetics$current_plot_id)
+    session$sendCustomMessage("editor_relayout", list(
+      plot_id = rv_plot_aesthetics$current_plot_id,
+      update = list("legend.bgcolor" = input$editor_legend_bg)
+    ))
+  }, ignoreInit = TRUE)
+
+  # Legend TITLE font (family / size / color)
+  observe({
+    req(rv_plot_aesthetics$current_plot_id, identical(rv_plot_aesthetics$current_element, "legend"))
+    update <- list()
+    if (!is.null(input$editor_legend_title_fontfamily)) update[["legend.title.font.family"]] <- input$editor_legend_title_fontfamily
+    if (!is.null(input$editor_legend_title_fontsize))   update[["legend.title.font.size"]]   <- input$editor_legend_title_fontsize
+    if (!is.null(input$editor_legend_title_fontcolor))  update[["legend.title.font.color"]]  <- input$editor_legend_title_fontcolor
+    if (length(update) > 0) session$sendCustomMessage("editor_relayout",
+      list(plot_id = rv_plot_aesthetics$current_plot_id, update = update))
+  })
+
+  # Legend ITEM font (family / size / color)
+  observe({
+    req(rv_plot_aesthetics$current_plot_id, identical(rv_plot_aesthetics$current_element, "legend"))
+    update <- list()
+    if (!is.null(input$editor_legend_item_fontfamily)) update[["legend.font.family"]] <- input$editor_legend_item_fontfamily
+    if (!is.null(input$editor_legend_item_fontsize))   update[["legend.font.size"]]   <- input$editor_legend_item_fontsize
+    if (!is.null(input$editor_legend_item_fontcolor))  update[["legend.font.color"]]  <- input$editor_legend_item_fontcolor
+    if (length(update) > 0) session$sendCustomMessage("editor_relayout",
+      list(plot_id = rv_plot_aesthetics$current_plot_id, update = update))
+  })
+
+  # Legend TITLE bold (HTML wrap of legend.title.text)
+  observeEvent(input$editor_legend_title_bold, {
+    req(rv_plot_aesthetics$current_plot_id, identical(rv_plot_aesthetics$current_element, "legend"))
+    session$sendCustomMessage("editor_legend_title_bold",
+      list(plot_id = rv_plot_aesthetics$current_plot_id, bold = isTRUE(input$editor_legend_title_bold)))
+  }, ignoreInit = TRUE)
+
+  # Legend ITEM bold (HTML wrap of each trace name)
+  observeEvent(input$editor_legend_item_bold, {
+    req(rv_plot_aesthetics$current_plot_id, identical(rv_plot_aesthetics$current_element, "legend"))
+    session$sendCustomMessage("editor_legend_items_bold",
+      list(plot_id = rv_plot_aesthetics$current_plot_id, bold = isTRUE(input$editor_legend_item_bold)))
+  }, ignoreInit = TRUE)
+
+  # Sync sliders when the legend is dragged directly on the plot
+  observeEvent(input$editor_legend_dragged, {
+    d <- input$editor_legend_dragged
+    if (!is.null(d$x)) updateSliderInput(session, "editor_legend_x", value = round(as.numeric(d$x), 2))
+    if (!is.null(d$y)) updateSliderInput(session, "editor_legend_y", value = round(as.numeric(d$y), 2))
   }, ignoreInit = TRUE)
   
   # Trace Styling

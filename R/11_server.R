@@ -607,6 +607,13 @@ server <- function(input, output, session) {
       # delay restoration to ensure UI elements are rendered
       shinyjs::delay(500, {
         restore_session_state(state, selected_genes, query_results, global_query_state, combined_selections, ortholog_state, session)
+        
+        if (!is.null(state$plot_settings_gene_colors)) {
+          plot_settings$gene_colors <- state$plot_settings_gene_colors
+        }
+        if (!is.null(state$plot_settings_similarity_gene_colors)) {
+          plot_settings$similarity_gene_colors <- state$plot_settings_similarity_gene_colors
+        }
 
         debug_print("state restored, showing notification")
 
@@ -659,7 +666,9 @@ server <- function(input, output, session) {
       viz = input$group_viz_type,
       distance = input$distance_method,
       transform = input$data_transform,
-      aggregation = input$aggregation_level
+      aggregation = input$aggregation_level,
+      gene_colors = plot_settings$gene_colors,
+      sim_gene_colors = plot_settings$similarity_gene_colors
     )
 
     isolate({
@@ -686,7 +695,9 @@ server <- function(input, output, session) {
           ortholog_state$selected_orthologs
         } else {
           NULL
-        }
+        },
+        plot_settings_gene_colors = deps$gene_colors,
+        plot_settings_similarity_gene_colors = deps$sim_gene_colors
       )
 
       session$sendCustomMessage(type = "saveSession", message = current_state)
@@ -1297,8 +1308,12 @@ server <- function(input, output, session) {
                 selected = isolate(plot_settings$similarity_palette %||% "Set2")
               ),
               hr(),
-              h6("Per-Gene Colors"),
-              p(class = "text-muted", "Click to customize individual gene colors"),
+              div(
+                style = "display: flex; justify-content: space-between; align-items: center;",
+                h6("Per-Gene Colors", style = "margin: 0;"),
+                actionButton("reset_sim_gene_colors", "Reset to Defaults", icon = icon("undo"), class = "btn-sm btn-outline-secondary")
+              ),
+              p(class = "text-muted", "Click or type hex code to customize individual gene colors"),
               uiOutput("similarity_gene_color_pickers")
             ),
             hr(),
@@ -1335,8 +1350,12 @@ server <- function(input, output, session) {
                 selected = isolate(plot_settings$gene_palette)
               ),
               hr(),
-              h6("Per-Gene Colors"),
-              p(class = "text-muted", "Click to customize individual gene colors"),
+              div(
+                style = "display: flex; justify-content: space-between; align-items: center;",
+                h6("Per-Gene Colors", style = "margin: 0;"),
+                actionButton("reset_gene_colors", "Reset to Defaults", icon = icon("undo"), class = "btn-sm btn-outline-secondary")
+              ),
+              p(class = "text-muted", "Click or type hex code to customize individual gene colors"),
               uiOutput("gene_color_pickers")
             ),
             hr(),
@@ -1623,118 +1642,111 @@ server <- function(input, output, session) {
 
   # Gene Color Pickers Implementation
   output$gene_color_pickers <- renderUI({
-    input$show_settings # Force re-evaluation on modal open
     req(gene_group_state$ready, gene_group_state$data)
 
-    # Extract unique genes
     if (isTRUE(gene_group_state$is_multi_species)) {
       genes <- unique(gene_group_state$data$GeneLabel)
     } else {
       genes <- unique(gene_group_state$data$Gene)
     }
-
-    if (length(genes) == 0) {
-      return(NULL)
-    }
+    if (length(genes) == 0) return(NULL)
     genes <- stringr::str_sort(genes, numeric = TRUE)
 
-    # Isolate settings readings to prevent re-render loop when picking colors
-    isolate({
-      # Get current colors or generate defaults
-      current_colors <- plot_settings$gene_colors
-      if (is.null(current_colors)) {
-        current_colors <- list()
-      }
+    # Reactive read (mirrors species picker). No isolate() and no write-back here,
+    # so the rendered swatches always reflect the current saved colours and there
+    # is no stale frame to flicker on reopen. Defaults are filled elsewhere
+    # (see the gene_group_state$data observer).
+    current_colors <- plot_settings$gene_colors
+    defaults <- get_palette_colors(plot_settings$gene_palette %||% "Set2", length(genes))
+    names(defaults) <- genes
 
-      # Generate default if missing
-      defaults <- get_palette_colors(plot_settings$gene_palette %||% "Set2", length(genes))
-      names(defaults) <- genes
-
-      updated_colors <- current_colors
-      changed <- FALSE
-      for (g in genes) {
-        if (is.null(updated_colors[[g]])) {
-          updated_colors[[g]] <- defaults[[g]]
-          changed <- TRUE
-        }
-      }
-      if (changed) {
-        plot_settings$gene_colors <- updated_colors
-      }
-
-      # Create pickers
-      picker_list <- lapply(genes, function(g) {
-        id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
-        input_id <- paste0("gene_color_", id_suffix)
-        col <- updated_colors[[g]]
-
-        div(
-          style = "display: inline-block; margin: 5px; width: 150px;",
-          colourpicker::colourInput(
-            input_id,
-            label = g,
-            value = col,
-            showColour = "background"
-          )
+    picker_list <- lapply(genes, function(g) {
+      col <- if (!is.null(current_colors[[g]])) current_colors[[g]] else defaults[[g]]
+      div(
+        style = "display: inline-block; margin: 5px; width: 150px;",
+        colourpicker::colourInput(
+          paste0("gene_color_", gsub("[^a-zA-Z0-9]", "_", g)),
+          label = g, value = col, showColour = "both"
         )
-      })
-
-      do.call(tagList, picker_list)
+      )
     })
+    do.call(tagList, picker_list)
+  })
+
+  # Keep live while the modal/conditionalPanel is hidden, so the input$show_settings
+  # bump recomputes it with the current plot_settings$gene_colors on reopen instead
+  # of re-serving the stale first (default) render.
+  outputOptions(output, "gene_color_pickers", suspendWhenHidden = FALSE)
+
+  # Handle reset gene colors
+  observeEvent(input$reset_gene_colors, {
+    req(gene_group_state$ready, gene_group_state$data)
+    if (isTRUE(gene_group_state$is_multi_species)) {
+      genes <- unique(gene_group_state$data$GeneLabel)
+    } else {
+      genes <- unique(gene_group_state$data$Gene)
+    }
+    if (length(genes) > 0) {
+      sorted_genes <- stringr::str_sort(genes, numeric = TRUE)
+      defaults <- get_palette_colors(plot_settings$gene_palette %||% "Set2", length(sorted_genes))
+      names(defaults) <- sorted_genes
+      plot_settings$gene_colors <- as.list(defaults)
+    }
   })
 
   # Similarity Gene Color Pickers Implementation
   output$similarity_gene_color_pickers <- renderUI({
-    input$show_settings # Force re-evaluation on modal open
     req(similarity_results())
-    
     top_genes <- similarity_results()$table %>% group_by(Target) %>% slice_head(n = input$similarity_top_matches[1]) %>% pull(gene_id)
     matches <- similarity_results()$plot_data %>% filter(type == "match", gene_id %in% top_genes)
     unique_labels <- unique(paste0(matches$label, " (", matches$target_species, ")"))
     if (length(unique_labels) == 0) return(NULL)
-    
     unique_labels <- stringr::str_sort(unique_labels, numeric = TRUE)
-    
-    isolate({
-      current_colors <- plot_settings$similarity_gene_colors
-      if (is.null(current_colors)) current_colors <- list()
-      
-      defaults <- get_palette_colors(plot_settings$similarity_palette %||% "Dark2", length(unique_labels))
-      names(defaults) <- unique_labels
-      
-      updated_colors <- current_colors
-      changed <- FALSE
-      for (lbl in unique_labels) {
-        if (is.null(updated_colors[[lbl]])) {
-          updated_colors[[lbl]] <- defaults[[lbl]]
-          changed <- TRUE
-        }
-      }
-      if (changed) {
-        plot_settings$similarity_gene_colors <- updated_colors
-      }
-      
-      picker_list <- lapply(unique_labels, function(lbl) {
-        input_id <- paste0("sim_gene_color_", gsub("[^a-zA-Z0-9]", "_", lbl))
-        col <- updated_colors[[lbl]]
-        
-        div(
-          style = "display: block; margin: 5px; width: 100%;",
-          colourpicker::colourInput(
-            input_id,
-            label = lbl,
-            value = col,
-            showColour = "background"
-          )
+
+    current_colors <- plot_settings$similarity_gene_colors
+    defaults <- get_palette_colors(plot_settings$similarity_palette %||% "Dark2", length(unique_labels))
+    names(defaults) <- unique_labels
+
+    picker_list <- lapply(unique_labels, function(lbl) {
+      col <- if (!is.null(current_colors[[lbl]])) current_colors[[lbl]] else defaults[[lbl]]
+      div(
+        style = "display: block; margin: 5px; width: 100%;",
+        colourpicker::colourInput(
+          paste0("sim_gene_color_", gsub("[^a-zA-Z0-9]", "_", lbl)),
+          label = lbl, value = col, showColour = "both"
         )
-      })
-      do.call(tagList, picker_list)
+      )
     })
+    do.call(tagList, picker_list)
+  })
+  outputOptions(output, "similarity_gene_color_pickers", suspendWhenHidden = FALSE)
+
+  # Handle reset similarity gene colors
+  observeEvent(input$reset_sim_gene_colors, {
+    req(similarity_results())
+    top_genes <- similarity_results()$table %>% group_by(Target) %>% slice_head(n = input$similarity_top_matches[1]) %>% pull(gene_id)
+    matches <- similarity_results()$plot_data %>% filter(type == "match", gene_id %in% top_genes)
+    unique_labels <- unique(paste0(matches$label, " (", matches$target_species, ")"))
+    if (length(unique_labels) > 0) {
+      sorted_labels <- stringr::str_sort(unique_labels, numeric = TRUE)
+      defaults <- get_palette_colors(plot_settings$similarity_palette %||% "Dark2", length(sorted_labels))
+      names(defaults) <- sorted_labels
+      plot_settings$similarity_gene_colors <- as.list(defaults)
+    }
   })
 
   # Update gene colors when palette changes
   observeEvent(input$settings_gene_palette, {
     req(gene_group_state$ready, gene_group_state$data)
+
+    # The settings modal is rebuilt on every open, which re-initializes this
+    # selectInput and re-fires this observer (NULL -> saved value). Without this
+    # guard we would regenerate gene_colors from the palette on every reopen,
+    # discarding the user's custom per-gene colors. Only regenerate when the
+    # palette selection has genuinely changed.
+    if (identical(input$settings_gene_palette, plot_settings$gene_palette)) {
+      return()
+    }
 
     plot_settings$gene_palette <- input$settings_gene_palette
     plot_settings$updating_colors_from_palette <- TRUE
@@ -1769,6 +1781,12 @@ server <- function(input, output, session) {
   # update species colors when palette changes - regenerates all colors from palette
   observeEvent(input$settings_species_palette, {
     req(plot_settings$initialized)
+
+    # Only regenerate colors when the species palette selection has genuinely changed
+    if (identical(input$settings_species_palette, plot_settings$species_palette)) {
+      return()
+    }
+
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
     plot_settings$species_palette <- input$settings_species_palette
@@ -1802,6 +1820,11 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$settings_similarity_palette, {
+    # Only regenerate colors when the similarity palette selection has genuinely changed
+    if (identical(input$settings_similarity_palette, plot_settings$similarity_palette)) {
+      return()
+    }
+
     plot_settings$similarity_palette <- input$settings_similarity_palette
     
     # Update individual pickers
@@ -3718,6 +3741,21 @@ server <- function(input, output, session) {
       return()
     }
 
+    # Ensure every current gene has a stored colour (palette default for any not
+    # yet customised). Lives here, not in the picker renderUI, so the renderUI can
+    # read gene_colors reactively without a read/write feedback loop. Reads via
+    # isolate() so it doesn't re-trigger on its own writes.
+    local({
+      sorted_genes <- stringr::str_sort(genes, numeric = TRUE)
+      current <- isolate(plot_settings$gene_colors)
+      if (is.null(current)) current <- list()
+      defaults <- get_palette_colors(isolate(plot_settings$gene_palette) %||% "Set2", length(sorted_genes))
+      names(defaults) <- sorted_genes
+      changed <- FALSE
+      for (g in sorted_genes) if (is.null(current[[g]])) { current[[g]] <- defaults[[g]]; changed <- TRUE }
+      if (changed) plot_settings$gene_colors <- current
+    })
+
     # create new observers
     gene_color_obs_manager$observers <- lapply(genes, function(g) {
       id_suffix <- gsub("[^a-zA-Z0-9]", "_", g)
@@ -3747,6 +3785,17 @@ server <- function(input, output, session) {
     unique_labels <- unique(paste0(matches$label, " (", matches$target_species, ")"))
     if (length(unique_labels) == 0) return()
     
+    local({
+      sorted_labels <- stringr::str_sort(unique_labels, numeric = TRUE)
+      current <- isolate(plot_settings$similarity_gene_colors)
+      if (is.null(current)) current <- list()
+      defaults <- get_palette_colors(isolate(plot_settings$similarity_palette) %||% "Dark2", length(sorted_labels))
+      names(defaults) <- sorted_labels
+      changed <- FALSE
+      for (lbl in sorted_labels) if (is.null(current[[lbl]])) { current[[lbl]] <- defaults[[lbl]]; changed <- TRUE }
+      if (changed) plot_settings$similarity_gene_colors <- current
+    })
+
     sim_gene_color_obs_manager$observers <- lapply(unique_labels, function(lbl) {
       input_id <- paste0("sim_gene_color_", gsub("[^a-zA-Z0-9]", "_", lbl))
       observeEvent(input[[input_id]], {
@@ -4425,10 +4474,11 @@ server <- function(input, output, session) {
           }
 
           # Get current custom styles
-          custom_styles <- reactiveValuesToList(rv_plot_aesthetics)$styles
+          custom_styles <- isolate(rv_plot_aesthetics$styles)
           
           ggplotly(p, tooltip = "text") %>%
             layout(
+              uirevision = "gene_group_plot",
               plot_bgcolor = if (is_dark()) "#2c3034" else "white",
               paper_bgcolor = if (is_dark()) "#2c3034" else "white",
               font = list(color = if (is_dark()) "white" else "black")
@@ -6419,16 +6469,80 @@ server <- function(input, output, session) {
     )
   })
 
-  observeEvent(input$trigger_version_modal, {
-    showModal(build_version_modal(app_version_info))
-    shinyjs::runjs(sprintf(
-      'localStorage.setItem("rnacross_seen_version", "%s");',
-      app_version_info$version
+  ver_nav <- reactiveValues(keys = character(0), idx = 1L, missed = FALSE)
+
+  # full history keys ordered oldest -> newest (independent of list order)
+  ver_keys_sorted <- function() {
+    vers <- vapply(app_version_history, function(e) e$version, character(1))
+    names(app_version_history)[order(numeric_version(vers))]
+  }
+
+  open_version_modal <- function(keys, start_idx, missed) {
+    ver_nav$keys <- keys; ver_nav$idx <- start_idx; ver_nav$missed <- missed
+    showModal(modalDialog(
+      title = tagList(icon("bullhorn"), " App Updates"),
+      easyClose = TRUE, size = "m",
+      uiOutput("version_modal_header"),
+      uiOutput("version_modal_body"),
+      footer = tagList(div(
+        class = "d-flex w-100 justify-content-between align-items-center",
+        div(
+          actionButton("ver_prev", NULL, icon = icon("chevron-left"), class = "btn-sm"),
+          tags$span(class = "mx-2 text-muted small", textOutput("version_modal_pos", inline = TRUE)),
+          actionButton("ver_next", NULL, icon = icon("chevron-right"), class = "btn-sm")
+        ),
+        div(
+          tags$a(href = app_version_info$changelog_url, target = "_blank",
+                 class = "btn btn-outline-secondary btn-sm me-2",
+                 icon("scroll"), " View Change Log"),
+          modalButton("Got it!")
+        )
+      ))
     ))
+  }
+
+  output$version_modal_header <- renderUI({
+    if (isTRUE(ver_nav$missed) && length(ver_nav$keys) > 1) {
+      div(class = "alert alert-info py-2",
+          strong("You haven't been around for a while!"), br(),
+          "Use the arrows below to catch up on everything that changed.")
+    }
   })
 
+  output$version_modal_body <- renderUI({
+    req(length(ver_nav$keys) >= 1)
+    build_version_entry(app_version_history[[ ver_nav$keys[[ver_nav$idx]] ]])
+  })
+
+  output$version_modal_pos <- renderText({
+    req(length(ver_nav$keys) >= 1)
+    sprintf("%d of %d", ver_nav$idx, length(ver_nav$keys))
+  })
+
+  observeEvent(input$ver_prev, { ver_nav$idx <- max(1L, ver_nav$idx - 1L) })
+  observeEvent(input$ver_next, { ver_nav$idx <- min(length(ver_nav$keys), ver_nav$idx + 1L) })
+
+  # AUTO trigger: show only releases newer than what the user last saw
+  observeEvent(input$trigger_version_modal, {
+    seen <- input$trigger_version_modal$seen
+    all_keys <- ver_keys_sorted()                       # oldest -> newest
+    if (is.null(seen) || !nzchar(seen)) {
+      open_version_modal(tail(all_keys, 1), 1L, missed = FALSE)   # first-time: newest only
+    } else {
+      newer <- vapply(all_keys, function(k)
+        numeric_version(app_version_history[[k]]$version) > numeric_version(seen), logical(1))
+      unseen <- all_keys[newer]
+      if (length(unseen) == 0) unseen <- tail(all_keys, 1)
+      open_version_modal(unseen, 1L, missed = length(unseen) > 1)  # start at OLDEST unseen
+    }
+    shinyjs::runjs(sprintf('localStorage.setItem("rnacross_seen_version", "%s");',
+                           app_version_info$version))
+  })
+
+  # MANUAL trigger (bullhorn): full history, start at newest, browse backward
   observeEvent(input$show_version_info, {
-    showModal(build_version_modal(app_version_info))
+    all_keys <- ver_keys_sorted()
+    open_version_modal(all_keys, length(all_keys), missed = FALSE)
   })
 
   observeEvent(input$launch_tutorial_from_modal, {

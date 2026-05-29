@@ -2,6 +2,28 @@
 
 All notable changes to RNAcross are documented in this file.
 
+## [3.1.1] — 2026-05-29
+
+### Added
+
+- **Legend Customization in the Interactive Aesthetic Editor**
+  - The legend can now be repositioned with the editor's X/Y sliders staying in sync.
+  - Added full legend font control: font family, size, color, and bold.
+  - Font styling can be applied independently to the **legend title** ("Gene") and the **legend item labels** (the gene names), or to both.
+
+### Fixed
+
+- **Per-Gene Line Colors Reverting (Plot Settings)**
+  - In the Multi-Gene / Gene Group settings, custom per-gene line colors no longer revert to defaults when the Plot Settings modal is reopened (Thanks Jess). The pickers now read the saved colors reactively (defaults are populated outside the renderer), and a palette observer no longer overwrites customized colors on reopen. The same fix was applied to the Similarity per-gene color pickers.
+
+- **Aesthetic Editor: Legend Controls Had No Effect**
+  - The legend X position, Y position, orientation, and background controls now actually update the plot (the server-side handlers were missing).
+
+- **Aesthetic Editor: Edits Reverting to Default**
+  - Editor changes no longer reset when clicking elsewhere on the plot or when reopening the editor. Plot re-renders are decoupled from editor selection state, manual interactions are preserved across redraws (`uirevision`), and each control is now seeded from the element's current live values so reopening reflects—and re-applies—the existing styling instead of defaults!!!!
+
+- **Aesthetic Editor: Bold Not Working**
+  - Legend bold now applies reliably. Bolding uses HTML markup (legend title text and trace names) which Plotly.js reliably honors.
 ---
 
 ## [3.1.0] — 2026-05-26
@@ -26,10 +48,19 @@ All notable changes to RNAcross are documented in this file.
   - Debuted a new feature using plotly.js to allow for click-and-customize features on the gene expression plots.
   - Currently available exclusively for the Gene Group Analysis line plot. 
 
+- **Enter button functionality**
+  - Everyone knows that a good app allows you to press enter to initialize... and our's does too, now.
+  - Pressing enter while typing in a search or input box triggers that tab's primary action; i.e., searching a gene, analyzing a gene group, running PCA, or generating a heatmap/ridgeline
+  - Uses the same global key listener most apps use via JS. (Our style is thanks to Kryptech YouTube where I got the execution from) 
+
 ### Changed
 
 - **Species Binomial Nomenclature**
   - Species names now appear in italics to properly follow binomial nomenclature on all outputs where species names are reported.
+
+- **Plotlys as Javascript elements**
+  - Plotlys are now directly rendered as Java elements. There is no R redraw via ggplot.
+  - Allows for added features and customization since controls are seeded from the plotly render, meaning the output reflects custom states rather than ggplot to plotly defaults
 
 ### Fixed
 

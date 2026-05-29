@@ -335,22 +335,8 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
       ) %>%
       htmlwidgets::onRender("
         function(el, x) {
-          var debugMsg = document.createElement('div');
-          debugMsg.className = 'interactive-debug-msg';
-          debugMsg.style.padding = '5px';
-          debugMsg.style.fontWeight = 'bold';
-          
           if (typeof window.initInteractiveEditor === 'function') {
-            debugMsg.style.color = 'green';
-            debugMsg.innerText = '[System: Interactive Editor Successfully Initialized]';
             window.initInteractiveEditor(el);
-          } else {
-            debugMsg.style.color = 'red';
-            debugMsg.innerText = '[System Error: Interactive Editor JS failed to load or is undefined]';
-          }
-          
-          if (el && el.parentNode) {
-            el.parentNode.insertBefore(debugMsg, el);
           }
         }
       "))

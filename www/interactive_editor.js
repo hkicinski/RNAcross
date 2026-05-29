@@ -205,12 +205,63 @@
                 debugMsg.style.color = elementType === 'none' ? 'orange' : 'blue';
             }
 
+            // Capture the element's CURRENT values so the editor controls can be
+            // seeded with them (otherwise reopening pushes hardcoded defaults).
+            let current = {};
+            try {
+                const FL = gd._fullLayout || {};
+                const L  = gd.layout || {};
+                if (elementType === 'legend') {
+                    const lg   = FL.legend || L.legend || {};
+                    const lgf  = lg.font || {};
+                    const lgt  = lg.title || {};
+                    const lgtf = lgt.font || {};
+                    const boldRe = /^<b>[\s\S]*<\/b>$/;
+                    const firstName = (gd.data && gd.data[0] && gd.data[0].name) || "";
+                    current = {
+                        legend_x: lg.x, legend_y: lg.y,
+                        legend_orientation: lg.orientation || 'v',
+                        legend_bgcolor: lg.bgcolor,
+                        legend_item_fontfamily: lgf.family,
+                        legend_item_fontsize: lgf.size,
+                        legend_item_fontcolor: lgf.color,
+                        legend_item_bold: boldRe.test(firstName),
+                        legend_title_fontfamily: lgtf.family,
+                        legend_title_fontsize: lgtf.size,
+                        legend_title_fontcolor: lgtf.color,
+                        legend_title_bold: boldRe.test(lgt.text || "")
+                    };
+                } else if (elementType === 'trace' && traceIndex >= 0 && gd.data && gd.data[traceIndex]) {
+                    const tr = gd.data[traceIndex];
+                    current = {
+                        trace_color: (tr.line && tr.line.color) || (tr.marker && tr.marker.color),
+                        trace_width: tr.line && tr.line.width,
+                        trace_dash: (tr.line && tr.line.dash) || 'solid',
+                        trace_markersize: tr.marker && tr.marker.size,
+                        trace_mode: tr.mode
+                    };
+                } else if (elementType === 'title' || elementType === 'text_element') {
+                    const t = L.title || FL.title || {};
+                    current = {
+                        title_text: (typeof t === 'string') ? t : (t.text),
+                        title_size: t.font && t.font.size,
+                        title_color: t.font && t.font.color
+                    };
+                } else if (elementType === 'background') {
+                    current = {
+                        bg_plot:  FL.plot_bgcolor  || L.plot_bgcolor,
+                        bg_paper: FL.paper_bgcolor || L.paper_bgcolor
+                    };
+                }
+            } catch (e) { current = {}; }
+
             // Send to Shiny
             Shiny.setInputValue('plot_element_clicked', {
                 element: elementType,
                 axis_id: axisId,
                 trace_name: traceName,
                 trace_index: traceIndex,
+                current: current,
                 plot_id: plotEl.id,
                 rand: Math.random() 
             });
@@ -240,6 +291,18 @@
             bindListeners();
         });
 
+        gd.on('plotly_relayout', function(ed) {
+            if (!ed) return;
+            if (ed['legend.x'] !== undefined || ed['legend.y'] !== undefined) {
+                Shiny.setInputValue('editor_legend_dragged', {
+                    x: ed['legend.x'],
+                    y: ed['legend.y'],
+                    plot_id: plotEl.id,
+                    rand: Math.random()
+                });
+            }
+        });
+
         // Handle trace clicks natively through Plotly
         if (!gd._hasTraceListener) {
             gd.on('plotly_click', function(data) {
@@ -251,6 +314,7 @@
                         element: 'trace',
                         trace_name: traceName,
                         trace_index: point.curveNumber,
+                        current: {},
                         plot_id: plotEl.id || gd.id,
                         rand: Math.random()
                     });
@@ -284,6 +348,28 @@
               Plotly.restyle(plotEl, msg.update);
           }
       }
+  });
+
+  Shiny.addCustomMessageHandler('editor_legend_title_bold', function(msg) {
+      if (!msg.plot_id) return;
+      const el = document.getElementById(msg.plot_id);
+      if (!el) return;
+      const FL = el._fullLayout || {}, L = el.layout || {};
+      let t = (FL.legend && FL.legend.title && FL.legend.title.text) ||
+              (L.legend && L.legend.title && L.legend.title.text) || "";
+      t = t.replace(/^<b>([\s\S]*)<\/b>$/, "$1");
+      Plotly.relayout(el, { 'legend.title.text': msg.bold ? ('<b>' + t + '</b>') : t });
+  });
+
+  Shiny.addCustomMessageHandler('editor_legend_items_bold', function(msg) {
+      if (!msg.plot_id) return;
+      const el = document.getElementById(msg.plot_id);
+      if (!el || !el.data) return;
+      const names = el.data.map(function(tr) {
+          let n = (tr.name || "").replace(/^<b>([\s\S]*)<\/b>$/, "$1");
+          return msg.bold ? ('<b>' + n + '</b>') : n;
+      });
+      Plotly.restyle(el, { name: names });
   });
 
   // Handle Reset to Defaults
