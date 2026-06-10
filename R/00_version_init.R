@@ -1,4 +1,21 @@
 app_version_history <- list(
+  "3.1.2" = list(
+    version      = "3.1.2",
+    release_date = "2026-06-09",
+    title        = "S. cerevisiae 2026 Datasets",
+    message      = c(
+      "Integrated the new 2026 S. cerevisiae sequencing datasets (WT and Δppx1 Δppn1) and added a global UI toggle to switch between them and the 2023 data, alongside new contrast modes for side-by-side comparison."
+    ),
+    features   = c(
+      "S. cerevisiae Dataset Toggle: Added a new option in the Plot Settings modal under Expression Data Source to globally toggle between the 2023 data, WT S288C 2026 (yH545) data, and Δppx1 Δppn1 S288C 2026 (yH1053) data.",
+      "Contrast Modes: Side-by-side comparison modes (2026 WT vs Mutant, and 2023 WT vs 2026 WT) available with optional display scaling (Z-score, Center).",
+      "Dataset Persistence: The selected S. cerevisiae dataset is now cached in your browser session and will persist across app reloads."
+    ),
+    bug_fixes  = c(),
+    show_changelog = TRUE,
+    changelog_url  = "https://github.com/hkicinski/RNAcross/blob/main/CHANGELOG.md",
+    show_tutorial  = FALSE
+  ),
   "3.1.1" = list(
     version      = "3.1.1",
     release_date = "2026-05-29",

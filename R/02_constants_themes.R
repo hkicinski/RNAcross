@@ -318,7 +318,8 @@ generate_default_settings <- function(species_config) {
     export_width = 8,
     export_height = 6,
     export_dpi = 300,
-    export_format = "png"
+    export_format = "png",
+    sc_dataset = "2023"
   )
 }
 

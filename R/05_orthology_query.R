@@ -135,13 +135,14 @@ build_synteny_group <- function(gene_id, species_code, all_species_data) {
   if (is.null(syn)) return(NULL)
 
   sc_gene <- NULL
+  lookup_df <- get(paste0(species_code, "_anno"))
 
   if (species_code == "sc") {
     sc_gene <- gene_id
   } else {
     table_name <- paste0(species_code, "ToSc")
     if (!is.null(syn[[table_name]])) {
-      id_col <- paste0(species_code, "id")
+      id_col <- paste0(base_code, "id")
       syn_match <- syn[[table_name]][syn[[table_name]][[id_col]] == gene_id, ]
       if (nrow(syn_match) > 0) {
         sc_gene <- as.character(syn_match$scid[1])
@@ -335,10 +336,8 @@ add_gene_names <- function(gene_ids, species_id) {
   }
 
   # use lookup table
-  lookup_table <- all_species_data$gene_lookup
-
-  # get genes for this species
-  gene_info <- lookup_table[gene_id %in% gene_ids & species == species_id]
+  lookup <- all_species_data$gene_lookup
+  gene_info <- lookup[gene_id %in% gene_ids & species == species_id]
 
   # create result dataframe
   result <- data.frame(
@@ -398,8 +397,9 @@ extract_orthology_for_genes <- function(gene_list, all_species_data = NULL, conf
       gene_entry <- list(original = gene)
 
       for (sp_code in names(config)) {
-        if (sp_code %in% names(query_result$genes_by_species)) {
-          sp_genes_df <- query_result$genes_by_species[[sp_code]]
+        base_code <- sp_code
+        if (base_code %in% names(query_result$genes_by_species)) {
+          sp_genes_df <- query_result$genes_by_species[[base_code]]
           if (!is.null(sp_genes_df) && nrow(sp_genes_df) > 0) {
             gene_entry[[sp_code]] <- sp_genes_df$gene_id
           } else {

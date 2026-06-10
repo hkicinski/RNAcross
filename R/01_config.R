@@ -93,7 +93,7 @@ suppressMessages({
 # data loading
 # load the RData file with HOG-based orthogroups
 # path relative to project root (where app.R is located)
-load(file.path("data", "RData_perSpecies_HOG_clean_11182025_rlog.RData"))
+load(file.path("data", "06092026-updated.RData"))
 
 # gene lookup table preprocessing
 # preprocess gene lookup table at startup for faster queries
@@ -113,3 +113,36 @@ if (!is.null(all_species_data$gene_lookup)) {
   setindex(all_species_data$gene_lookup, species)
   setindex(all_species_data$gene_lookup, gene_id)
 }
+
+if (!requireNamespace('shinyWidgets', quietly = TRUE)) {
+  install.packages('shinyWidgets', repos = 'https://cloud.r-project.org')
+}
+library(shinyWidgets)
+
+# default list of all supported species
+ALL_SPECIES <- list(
+  sc = list(
+    name = "S. cerevisiae",
+    short = "S.c.",
+    color = "#440154",
+    shape = 16
+  ),
+  cg = list(
+    name = "C. glabrata",
+    short = "C.g.",
+    color = "#3b528b",
+    shape = 17
+  ),
+  kl = list(
+    name = "K. lactis",
+    short = "K.l.",
+    color = "#21918c",
+    shape = 15
+  ),
+  ca = list(
+    name = "C. albicans",
+    short = "C.a.",
+    color = "#5ec962",
+    shape = 18
+  )
+)

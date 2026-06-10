@@ -80,32 +80,104 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
         Replicate = sample_info$Replicate,
         exn = as.numeric(lc[gene_to_use, ])
       )
+      
+      has_contrast <- "Contrast_Series" %in% names(sample_info) && length(unique(sample_info$Contrast_Series)) > 1
+      
+      if (has_contrast) {
+        dt$Series <- sample_info$Contrast_Series
+        dt$Group <- paste(dt$Series, "Rep", dt$Replicate)
+      } else {
+        dt$Series <- species_name
+        dt$Group <- paste("Rep", dt$Replicate)
+      }
 
       plot_bg_color <- if (is_dark_mode) "#2c3034" else "white"
       text_color <- if (is_dark_mode) "white" else "black"
       grid_color <- if (is_dark_mode) "gray30" else "gray90"
 
-      # custom color scale with shades of the species color for replicates
-      n_replicates <- length(unique(dt$Replicate))
-      if (n_replicates == 1) {
-        replicate_colors <- species_color
-      } else if (n_replicates == 2) {
-        replicate_colors <- c(species_color, adjustcolor(species_color, alpha.f = 0.7))
-      } else {
-        # generate a gradient for more replicates
-        alpha_values <- seq(1, 0.4, length.out = n_replicates)
-        replicate_colors <- sapply(alpha_values, function(a) adjustcolor(species_color, alpha.f = a))
+      # build colors and shapes
+      unique_series <- unique(dt$Series)
+      n_series <- length(unique_series)
+      
+      color_vector <- c()
+      rep_labels <- c()
+      
+      # Prepare a shape vector for ggplot
+      shape_vector <- c()
+      
+      for (series in unique_series) {
+        s_color <- if (!is.null(plot_settings) && series %in% names(plot_settings$species_colors)) {
+          plot_settings$species_colors[[series]]
+        } else if (!is.null(species_colors) && series %in% names(species_colors)) {
+          species_colors[[series]]
+        } else if (series == "WT 2026") {
+          "#E69F00"
+        } else if (series == "Mutant 2026") {
+          "#56B4E9"
+        } else if (series == "WT 2023") {
+          "#009E73"
+        } else {
+          "#440154"
+        }
+        
+        s_shape <- if (!is.null(plot_settings) && series %in% names(plot_settings$species_shapes)) {
+          as.integer(plot_settings$species_shapes[[series]])
+        } else if (series == "WT 2026") {
+          16L
+        } else if (series == "Mutant 2026") {
+          17L
+        } else if (series == "WT 2023") {
+          15L
+        } else {
+          16L
+        }
+        
+        series_reps <- sort(unique(dt$Replicate[dt$Series == series]))
+        n_replicates <- length(series_reps)
+        
+        if (n_replicates == 1) {
+          rep_colors <- s_color
+        } else if (n_replicates == 2) {
+          rep_colors <- c(s_color, adjustcolor(s_color, alpha.f = 0.7))
+        } else {
+          alpha_values <- seq(1, 0.4, length.out = n_replicates)
+          rep_colors <- sapply(alpha_values, function(a) adjustcolor(s_color, alpha.f = a))
+        }
+        
+        color_vector <- c(color_vector, rep_colors)
+        
+        # Add the shape n_replicates times
+        shape_vector <- c(shape_vector, rep(s_shape, n_replicates))
+        
+        if (has_contrast) {
+          rep_labels <- c(rep_labels, paste(series, "Rep", series_reps))
+        } else {
+          rep_labels <- c(rep_labels, paste("Rep", series_reps))
+        }
       }
+      names(color_vector) <- rep_labels
+      names(shape_vector) <- rep_labels
+      
+      dt$ColorGroup <- if (has_contrast) paste(dt$Series, "Rep", dt$Replicate) else paste("Rep", dt$Replicate)
 
       plot_title <- paste0("Expression of ", gene, " in <i>", species_name, "</i>")
+      if (has_contrast) {
+        plot_title <- paste0("Expression of ", gene, " (Contrast Mode)")
+      }
 
-      p <- ggplot(dt, aes(x = Timepoint, y = exn, color = factor(Replicate), group = Replicate)) +
-        geom_point(size = 3, shape = species_shape) +
-        geom_line(linewidth = 1) +
-        scale_color_manual(values = replicate_colors) +
+      # Global line aesthetics
+      global_thickness <- plot_settings$line_thickness %||% 1
+      global_type <- plot_settings$line_type %||% "solid"
+
+      p <- ggplot(dt, aes(x = Timepoint, y = exn, color = ColorGroup, group = Group)) +
+        geom_point(aes(shape = ColorGroup), size = 3) +
+        geom_line(linewidth = global_thickness, linetype = global_type) +
+        scale_color_manual(values = color_vector) +
+        scale_shape_manual(values = shape_vector) +
         labs(
           y = get_expression_label(transform_type),
-          color = "Replicate"
+          color = if (has_contrast) "Series - Replicate" else "Replicate",
+          shape = if (has_contrast) "Series - Replicate" else "Replicate"
         ) +
         theme_minimal() +
         theme(
@@ -262,39 +334,140 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
       y_label <- "rlog expression"
     }
 
+    has_contrast <- "Contrast_Series" %in% names(plot_data) && length(unique(plot_data$Contrast_Series)) > 1
+
+    if (has_contrast) {
+      plot_data$GroupFeature <- paste(plot_data$Gene, plot_data$Contrast_Series, "Rep", plot_data$Replicate)
+    } else {
+      plot_data$GroupFeature <- paste(plot_data$Gene, "Rep", plot_data$Replicate)
+    }
+
     n_genes <- length(unique(plot_data$Gene))
     n_groups <- length(unique(plot_data$Group))
+
+    # Determine aesthetic variables
+    use_linetype_aes <- FALSE
+    use_shape_aes <- FALSE
+
+    color_var <- NULL
+    linetype_var <- NULL
+    shape_var <- NULL
+
+    if (has_contrast) {
+      ds_enc <- if (!is.null(plot_settings$contrast_dataset_encoding)) plot_settings$contrast_dataset_encoding else "color"
+      gene_enc <- if (!is.null(plot_settings$contrast_gene_encoding)) plot_settings$contrast_gene_encoding else "linetype"
+
+      if (grepl("color", ds_enc)) color_var <- "Contrast_Series"
+      else if (grepl("color", gene_enc)) color_var <- "Gene"
+
+      if (grepl("linetype", ds_enc)) linetype_var <- "Contrast_Series"
+      else if (grepl("linetype", gene_enc)) linetype_var <- "Gene"
+
+      if (grepl("shape", ds_enc)) shape_var <- "Contrast_Series"
+      else if (grepl("shape", gene_enc)) shape_var <- "Gene"
+
+      use_linetype_aes <- !is.null(linetype_var)
+      use_shape_aes <- !is.null(shape_var)
+
+      # Fallback if no color is mapped
+      if (is.null(color_var)) color_var <- "Gene"
+    } else {
+      # No contrast, everything maps to Gene based on multigene encoding
+      # Wait, if multigene encoding is species, color_var = Species but here we only have Gene
+      enc_color <- if (!is.null(plot_settings$encoding_multigene_color)) plot_settings$encoding_multigene_color else "gene"
+      color_var <- if (enc_color == "species" && "Species" %in% names(plot_data)) "Species" else "Gene"
+
+      sec_enc <- if (!is.null(plot_settings$encoding_multigene_secondary)) plot_settings$encoding_multigene_secondary else "none"
+      use_linetype_aes <- sec_enc %in% c("linetype", "both")
+      use_shape_aes <- sec_enc %in% c("shape", "both")
+
+      if (use_linetype_aes) linetype_var <- "Gene"
+      if (use_shape_aes) shape_var <- "Gene"
+    }
+
+    # Global line aesthetics
+    global_thickness <- if (!is.null(plot_settings$line_thickness)) plot_settings$line_thickness else 1
 
     p <- ggplot(plot_data) +
       aes(
         x = Timepoint, y = Expression,
-        color = Gene, group = interaction(Gene, Replicate)
+        group = GroupFeature
       ) +
-      geom_line(linewidth = 1) +
       geom_point(size = 3)
+      
+    # Map encodings using aes_string (suppress deprecation warning to avoid Plotly .data crashes)
+    suppressWarnings({
+      p <- p + aes_string(color = color_var)
 
-    # Apply settings-based aesthetics if available
-    if (!is.null(plot_settings)) {
-      # Gene Colors
-      if (!is.null(plot_settings$gene_colors)) {
-        # flatten list to named vector
-        gene_cols <- unlist(plot_settings$gene_colors)
-        if (length(gene_cols) > 0) {
-          p <- p + scale_color_manual(values = gene_cols)
-        }
-      } else if (!is.null(plot_settings$gene_palette)) {
-         p <- p + scale_color_manual(values = get_palette_colors(plot_settings$gene_palette, n_genes))
+      if (use_linetype_aes) {
+        p <- p + geom_line(linewidth = global_thickness) + aes_string(linetype = linetype_var)
+      } else {
+        global_type <- if (!is.null(plot_settings$line_type)) plot_settings$line_type else "solid"
+        p <- p + geom_line(linewidth = global_thickness, linetype = global_type)
       }
+      
+      if (use_shape_aes) {
+        p <- p + aes_string(shape = shape_var)
+      }
+    })
 
-      # Secondary Encoding
-      if (!is.null(plot_settings$encoding_multigene_secondary)) {
-        sec <- plot_settings$encoding_multigene_secondary
-        if (sec %in% c("linetype", "both")) {
-          p <- p + aes(linetype = Gene)
+    # Apply custom palettes / manual scales
+    if (!is.null(plot_settings)) {
+      # Setup Color Scale
+      if (color_var == "Gene") {
+        genes_in_data <- unique(plot_data$Gene)
+        palette_name <- if (!is.null(plot_settings$gene_palette)) plot_settings$gene_palette else "Set2"
+        final_gene_cols <- get_palette_colors(palette_name, length(genes_in_data))
+        names(final_gene_cols) <- genes_in_data
+        
+        if (!is.null(plot_settings$gene_colors)) {
+          for (g in genes_in_data) {
+             val <- plot_settings$gene_colors[[g]]
+             if (!is.null(val) && val != "" && val != "NULL") {
+               final_gene_cols[[g]] <- val
+             }
+          }
         }
-        if (sec %in% c("shape", "both")) {
-          p <- p + aes(shape = Gene)
+        print("GENE COLOR VECTOR:")
+        print(final_gene_cols)
+        p <- p + scale_color_manual(values = final_gene_cols, name = "Gene")
+        
+      } else if (color_var == "Contrast_Series" || color_var == "Species") {
+        series_col <- if (color_var == "Contrast_Series") "Contrast_Series" else "Species"
+        unique_series <- unique(plot_data[[series_col]])
+        color_vector <- character()
+        for (series in unique_series) {
+          s_color <- NULL
+          if (!is.null(plot_settings$species_colors) && series %in% names(plot_settings$species_colors)) {
+            s_color <- plot_settings$species_colors[[series]]
+          }
+          if (is.null(s_color) || s_color == "" || s_color == "NULL") {
+             s_color <- if (series == "WT 2026") "#E69F00" else if (series == "Mutant 2026") "#56B4E9" else if (series == "WT 2023") "#009E73" else "#440154"
+          }
+          color_vector[series] <- s_color
         }
+        p <- p + scale_color_manual(values = color_vector, name = if(color_var=="Contrast_Series") "Series" else "Species")
+      }
+      
+      # Setup Shape Scale
+      if (use_shape_aes && shape_var == "Contrast_Series") {
+        unique_series <- unique(plot_data$Contrast_Series)
+        shape_vector <- integer()
+        for (series in unique_series) {
+          s_shape <- if (!is.null(plot_settings$species_shapes) && series %in% names(plot_settings$species_shapes)) {
+            as.integer(plot_settings$species_shapes[[series]])
+          } else if (series == "WT 2026") 16L else if (series == "Mutant 2026") 17L else if (series == "WT 2023") 15L else 16L
+          shape_vector[series] <- s_shape
+        }
+        p <- p + scale_shape_manual(values = shape_vector, name = "Series")
+      } else if (use_shape_aes && shape_var == "Gene") {
+        p <- p + labs(shape = "Gene")
+      }
+      
+      # Setup Linetype Legend Name
+      if (use_linetype_aes) {
+        if (linetype_var == "Contrast_Series") p <- p + labs(linetype = "Series")
+        if (linetype_var == "Gene") p <- p + labs(linetype = "Gene")
       }
     }
 
@@ -325,7 +498,56 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
       strip.text = element_text(color = text_color)
     )
 
-    return(ggplotly(p) %>%
+    gp <- ggplotly(p)
+
+    # --- Tidy the combined colour + linetype/shape legend that ggplotly emits ---
+    # ggplotly splits each series into a marker trace (shown in the legend) and a
+    # line trace (hidden), labels them as "(Series,Gene)" tuples, and stacks the
+    # legend title as "Series<br />Gene" - so the legend shows bare dots and the
+    # solid/dashed line encoding is lost. Rebuild one clean legend key per series
+    # that reflects the full line encoding (colour + dash + marker), hide the
+    # duplicated raw traces from the legend, and give it a single tidy title.
+    clean_legend_name <- function(nm) {
+      nm <- sub("^\\(", "", nm); nm <- sub("\\)$", "", nm)
+      trimws(gsub(",", " · ", nm))
+    }
+    legend_groups <- list()
+    for (i in seq_along(gp$x$data)) {
+      lg <- gp$x$data[[i]]$legendgroup
+      if (is.null(lg) || is.na(lg)) next
+      legend_groups[[lg]] <- c(legend_groups[[lg]], i)
+    }
+    legend_keys <- list()
+    for (lg in names(legend_groups)) {
+      marker_i <- NULL; line_i <- NULL
+      for (i in legend_groups[[lg]]) {
+        md <- gp$x$data[[i]]$mode
+        if (!is.null(md) && grepl("lines", md)) line_i <- i
+        if (!is.null(md) && grepl("markers", md)) marker_i <- i
+        gp$x$data[[i]]$showlegend <- FALSE
+      }
+      key <- list(
+        x = list(NA), y = list(NA), type = "scatter",
+        mode = if (!is.null(line_i) && !is.null(marker_i)) "lines+markers"
+               else if (!is.null(line_i)) "lines" else "markers",
+        name = clean_legend_name(lg), legendgroup = lg,
+        showlegend = TRUE, hoverinfo = "skip"
+      )
+      if (!is.null(line_i))   key$line   <- gp$x$data[[line_i]]$line
+      if (!is.null(marker_i)) key$marker <- gp$x$data[[marker_i]]$marker
+      legend_keys[[length(legend_keys) + 1]] <- key
+    }
+    if (length(legend_keys) > 0) gp$x$data <- c(gp$x$data, legend_keys)
+
+    # Single tidy legend title reflecting the active encodings (was "Series<br />Gene")
+    label_for <- function(v) if (is.null(v)) NULL else if (v == "Contrast_Series") "Series" else if (v == "Species") "Species" else "Gene"
+    color_label <- label_for(color_var)
+    secondary_label <- if (use_linetype_aes) label_for(linetype_var) else if (use_shape_aes) label_for(shape_var) else NULL
+    legend_title <- if (!is.null(secondary_label) && !identical(secondary_label, color_label))
+      paste(color_label, secondary_label, sep = " · ") else color_label
+    gp$x$layout$legend$title$text <- legend_title
+
+    return(gp %>%
       layout(
         plot_bgcolor = plot_bg_color,
         paper_bgcolor = plot_bg_color,

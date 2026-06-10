@@ -2,6 +2,15 @@
 
 All notable changes to RNAcross are documented in this file.
 
+## [3.1.2] — 2026-06-09
+
+### Added
+  - Integrated the new 2026 S. cerevisiae sequencing datasets (WT and Δppx1 Δppn1).
+  - Added a global UI toggle in the Plot Settings modal to seamlessly switch between the 2023 data, WT S288C 2026 (yH545), and Δppx1 Δppn1 S288C 2026 (yH1053) datasets.
+  - Contrast Modes: Side-by-side comparison modes (2026 WT vs Mutant, and 2023 WT vs 2026 WT) available with optional display scaling (Z-score, Center).
+  - The S. cerevisiae dataset selection is saved in the browser session (`localStorage`), meaning users do not have to re-select it upon reloading the app.
+  - Plugged the new data to the main `get_species_data()` function that underlies data retrieval; selects what users toggle upon request
+
 ## [3.1.1] — 2026-05-29
 
 ### Added

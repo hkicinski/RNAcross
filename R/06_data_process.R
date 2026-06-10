@@ -68,7 +68,7 @@ process_gene_group_data <- function(gene_groups, species_data, all_species_data,
           }
 
           if (gene_id %in% rownames(expr_matrix)) {
-            data.frame(
+            df <- data.frame(
               Gene = gene,
               Group = gene_groups$group_name[gene_groups$group_member == gene],
               Species = config[[species_code]]$short,
@@ -78,6 +78,10 @@ process_gene_group_data <- function(gene_groups, species_data, all_species_data,
               Expression = as.numeric(expr_matrix[gene_id, ]),
               stringsAsFactors = FALSE
             )
+            if ("Contrast_Series" %in% names(species_data$sample_info)) {
+              df$Contrast_Series <- species_data$sample_info$Contrast_Series
+            }
+            df
           }
         }
       }

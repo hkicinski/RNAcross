@@ -102,6 +102,7 @@ server <- function(input, output, session) {
     info_text
   })
 
+
   output$ridgeline_species_ui <- renderUI({
     config <- current_species_config()
     # build choices: "All Species" (not italic) + species names (italic via render)
@@ -332,11 +333,19 @@ server <- function(input, output, session) {
 
   # Dynamic species configuration
   current_species_config <- reactive({
-    if (data_source() == "custom" && length(defined_species()) > 0) {
+    base_config <- if (data_source() == "custom" && length(defined_species()) > 0) {
       defined_species()
     } else {
       DEFAULT_SPECIES_CONFIG
     }
+    
+    if (!is.null(plot_settings$contrast_mode_enabled) && plot_settings$contrast_mode_enabled) {
+      base_config$sc$name <- "S. cerevisiae (Contrast Mode)"
+    } else {
+      base_config$sc$name <- "S. cerevisiae"
+    }
+    
+    base_config
   })
 
   # initialize plot settings
@@ -349,6 +358,10 @@ server <- function(input, output, session) {
 
     # global data settings
     global_transform = "rlog",
+
+    # global line aesthetics
+    line_thickness = 1,
+    line_type = "solid",
 
     # multi-gene line/point encoding
     encoding_multigene_color = "species",
@@ -614,6 +627,12 @@ server <- function(input, output, session) {
         if (!is.null(state$plot_settings_similarity_gene_colors)) {
           plot_settings$similarity_gene_colors <- state$plot_settings_similarity_gene_colors
         }
+        if (!is.null(state$plot_settings_sc_dataset)) {
+          plot_settings$sc_dataset <- state$plot_settings_sc_dataset
+        }
+        if (!is.null(state$plot_settings_contrast_transform)) {
+          plot_settings$contrast_transform <- state$plot_settings_contrast_transform
+        }
 
         debug_print("state restored, showing notification")
 
@@ -668,7 +687,9 @@ server <- function(input, output, session) {
       transform = input$data_transform,
       aggregation = input$aggregation_level,
       gene_colors = plot_settings$gene_colors,
-      sim_gene_colors = plot_settings$similarity_gene_colors
+      sim_gene_colors = plot_settings$similarity_gene_colors,
+      sc_dataset = plot_settings$sc_dataset,
+      contrast_transform = plot_settings$contrast_transform
     )
 
     isolate({
@@ -697,7 +718,9 @@ server <- function(input, output, session) {
           NULL
         },
         plot_settings_gene_colors = deps$gene_colors,
-        plot_settings_similarity_gene_colors = deps$sim_gene_colors
+        plot_settings_similarity_gene_colors = deps$sim_gene_colors,
+        plot_settings_sc_dataset = deps$sc_dataset,
+        plot_settings_contrast_transform = deps$contrast_transform
       )
 
       session$sendCustomMessage(type = "saveSession", message = current_state)
@@ -826,7 +849,7 @@ server <- function(input, output, session) {
     species_data_list <- list()
     config <- current_species_config()
     for (species_id in names(config)) {
-      species_data_list[[species_id]] <- get_species_data(species_id)
+      species_data_list[[species_id]] <- get_species_data(species_id, force_no_contrast = TRUE)
     }
 
     # Get HOG data
@@ -936,9 +959,14 @@ server <- function(input, output, session) {
     tryCatch(
       {
         if (input$pca_type == "single") {
-          species_data <- get_species_data(input$pca_species)
-          lcpm_data <- get_expression_matrix(input$pca_species, plot_settings$global_transform, species_data)
-          sample_info <- if (input$pca_species == "cg") species_data$sample_info else species_data[[paste0(input$pca_species, "_sample_info")]]
+          resolved_species <- input$pca_species
+          if (resolved_species == "sc" && isTRUE(plot_settings$contrast_mode_enabled)) {
+            showNotification("Contrast mode active. Using base 2026 WT dataset for PCA.", type = "warning", duration = 5)
+          }
+          
+          species_data <- get_species_data(resolved_species, force_no_contrast = TRUE)
+          lcpm_data <- get_expression_matrix(resolved_species, plot_settings$global_transform, species_data)
+          sample_info <- if (resolved_species == "cg") species_data$sample_info else species_data[[paste0(resolved_species, "_sample_info")]]
 
           if (is.null(lcpm_data) || is.null(sample_info)) {
             stop("Required data not found for selected species")
@@ -948,7 +976,7 @@ server <- function(input, output, session) {
             type = "single",
             expression_matrix = lcpm_data,
             sample_info = sample_info,
-            species = input$pca_species,
+            species = resolved_species,
             n_genes = nrow(lcpm_data),
             n_samples = ncol(lcpm_data)
           )
@@ -957,7 +985,7 @@ server <- function(input, output, session) {
           aggregation_method <- if (!is.null(input$hog_aggregation_method)) input$hog_aggregation_method else "eigengene"
 
           plot_result <- create_multi_species_pca(
-            get_species_data = get_species_data,
+            get_species_data = function(sp) get_species_data(sp, force_no_contrast = TRUE),
             is_dark_mode = is_dark(),
             aggregation_method = aggregation_method,
             species_config = current_species_config(),
@@ -1257,6 +1285,47 @@ server <- function(input, output, session) {
           } else {
             "Currently using TMM-normalized log2CPM data"
           }
+        ),
+        h5(icon("dna"), " S. cerevisiae Dataset", style = "margin-top: 15px;"),
+        materialSwitch(
+          inputId = "settings_contrast_mode_enabled",
+          label = "Enable Contrast Mode (Overlay Datasets)",
+          value = isolate(plot_settings$contrast_mode_enabled %||% FALSE),
+          status = "success"
+        ),
+        conditionalPanel(
+          condition = "input.settings_contrast_mode_enabled == false",
+          radioButtons(
+            "settings_sc_dataset",
+            label = NULL,
+            choices = c("2023 Data" = "2023", 
+                        "WT S288C 2026 (yH545)" = "yH545", 
+                        "\u0394ppx1 \u0394ppn1 S288C 2026 (yH1053)" = "yH1053"),
+            selected = isolate(plot_settings$sc_dataset %||% "2023"),
+            inline = FALSE,
+            width = "100%"
+          )
+        ),
+        conditionalPanel(
+          condition = "input.settings_contrast_mode_enabled == true",
+          radioButtons(
+            "settings_contrast_type",
+            "Contrast Selection:",
+            choices = c("2026 WT vs \u0394ppx1 \u0394ppn1" = "contrast_2026",
+                        "2023 WT vs 2026 WT" = "contrast_wt"),
+            selected = isolate(plot_settings$contrast_type %||% "contrast_2026"),
+            inline = FALSE,
+            width = "100%"
+          ),
+          h5(icon("chart-line"), " Contrast Display Scaling", style = "margin-top: 15px;"),
+          radioButtons(
+            "settings_contrast_transform",
+            label = NULL,
+            choices = c("None (Raw values)" = "none", "Z-score (Row-scaled)" = "zscore", "Center (Row-centered)" = "center"),
+            selected = isolate(plot_settings$contrast_transform %||% "none"),
+            inline = TRUE,
+            width = "100%"
+          )
         )
       ),
       tabsetPanel(
@@ -1281,6 +1350,19 @@ server <- function(input, output, session) {
             hr(),
             h5("Per-Species Shapes"),
             uiOutput("species_shape_pickers")
+          )
+        ),
+
+        # tab 1b: line aesthetics
+        tabPanel(
+          "Line Plots",
+          icon = icon("chart-line"),
+          div(
+            style = "padding: 15px;",
+            h5("Global Line Aesthetics"),
+            p(class = "text-muted", "These settings apply across modules where line type/thickness isn't actively used for encoding."),
+            sliderInput("settings_line_thickness", "Line Thickness:", min = 0.5, max = 3.0, value = isolate(plot_settings$line_thickness %||% 1), step = 0.1),
+            selectInput("settings_line_type", "Line Type:", choices = c("Solid" = "solid", "Dashed" = "dashed", "Dotted" = "dotted", "Dot-Dash" = "dotdash", "Long Dash" = "longdash", "Two Dash" = "twodash"), selected = isolate(plot_settings$line_type %||% "solid"))
           )
         ),
 
@@ -1333,18 +1415,30 @@ server <- function(input, output, session) {
           div(
             style = "padding: 15px;",
             h5("Line/Point Plot Encoding"),
-            radioButtons("settings_multigene_color", "Color represents:",
-              choices = c("Species" = "species", "Gene" = "gene"),
-              selected = isolate(plot_settings$encoding_multigene_color),
-              inline = TRUE
-            ),
-            radioButtons("settings_multigene_secondary", "Secondary encoding:",
-              choices = c("Linetype" = "linetype", "Shape" = "shape", "Linetype + Shape" = "both", "None" = "none"),
-              selected = isolate(plot_settings$encoding_multigene_secondary),
-              inline = TRUE
+            conditionalPanel(
+              condition = "input.settings_contrast_mode_enabled == false",
+              radioButtons("settings_multigene_color", "Color represents:",
+                choices = c("Species" = "species", "Gene" = "gene"),
+                selected = isolate(plot_settings$encoding_multigene_color),
+                inline = TRUE
+              ),
+              radioButtons("settings_multigene_secondary", "Secondary encoding:",
+                choices = c("Linetype" = "linetype", "Shape" = "shape", "Linetype + Shape" = "both", "None" = "none"),
+                selected = isolate(plot_settings$encoding_multigene_secondary),
+                inline = TRUE
+              )
             ),
             conditionalPanel(
-              condition = "input.settings_multigene_color == 'gene'",
+              condition = "input.settings_contrast_mode_enabled == true",
+              radioButtons("settings_contrast_dataset_encoding", "Dataset (WT vs Mutant) encoded by:",
+                choices = c("Color" = "color", "Linetype" = "linetype", "Shape" = "shape", "Color + Shape" = "color_shape", "Linetype + Shape" = "linetype_shape"),
+                selected = isolate(plot_settings$contrast_dataset_encoding %||% "color"),
+                inline = TRUE
+              ),
+              uiOutput("ui_settings_contrast_gene_encoding")
+            ),
+            conditionalPanel(
+              condition = "(input.settings_contrast_mode_enabled == false && input.settings_multigene_color == 'gene') || (input.settings_contrast_mode_enabled == true && typeof input.settings_contrast_gene_encoding !== 'undefined' && input.settings_contrast_gene_encoding !== null && input.settings_contrast_gene_encoding.indexOf('color') > -1)",
               selectInput("settings_gene_palette", "Gene color palette:",
                 choices = c("Set1", "Set2", "Dark2", "Paired", "Accent", "Okabe-Ito"),
                 selected = isolate(plot_settings$gene_palette)
@@ -1594,10 +1688,30 @@ server <- function(input, output, session) {
   output$species_color_pickers <- renderUI({
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
+    
+    if (isTRUE(plot_settings$contrast_mode_enabled)) {
+      species_list <- species_list[names(species_list) != "sc"]
+      if (plot_settings$contrast_type == "contrast_2026") {
+        species_list <- c(species_list, "WT 2026" = "WT 2026", "Mutant 2026" = "Mutant 2026")
+      } else {
+        species_list <- c(species_list, "WT 2023" = "WT 2023", "WT 2026" = "WT 2026")
+      }
+    }
+    
     current_colors <- plot_settings$species_colors
 
     picker_list <- lapply(species_list, function(sp) {
-      col <- if (sp %in% names(current_colors)) current_colors[[sp]] else "#808080"
+      col <- if (sp %in% names(current_colors) && !is.null(current_colors[[sp]])) {
+        current_colors[[sp]]
+      } else if (sp == "WT 2026") {
+        "#E69F00"
+      } else if (sp == "Mutant 2026") {
+        "#56B4E9"
+      } else if (sp == "WT 2023") {
+        "#009E73"
+      } else {
+        "#808080"
+      }
       div(
         style = "display: inline-block; margin: 5px;",
         colourpicker::colourInput(
@@ -1616,6 +1730,16 @@ server <- function(input, output, session) {
   output$species_shape_pickers <- renderUI({
     config <- current_species_config()
     species_list <- sapply(config, function(x) x$short)
+    
+    if (isTRUE(plot_settings$contrast_mode_enabled)) {
+      species_list <- species_list[names(species_list) != "sc"]
+      if (plot_settings$contrast_type == "contrast_2026") {
+        species_list <- c(species_list, "WT 2026" = "WT 2026", "Mutant 2026" = "Mutant 2026")
+      } else {
+        species_list <- c(species_list, "WT 2023" = "WT 2023", "WT 2026" = "WT 2026")
+      }
+    }
+    
     current_shapes <- plot_settings$species_shapes
 
     shape_choices <- c(
@@ -1624,7 +1748,17 @@ server <- function(input, output, session) {
     )
 
     picker_list <- lapply(species_list, function(sp) {
-      shp <- if (sp %in% names(current_shapes)) current_shapes[[sp]] else 16
+      shp <- if (sp %in% names(current_shapes) && !is.null(current_shapes[[sp]])) {
+        current_shapes[[sp]]
+      } else if (sp == "WT 2026") {
+        16
+      } else if (sp == "Mutant 2026") {
+        17
+      } else if (sp == "WT 2023") {
+        15
+      } else {
+        16
+      }
       div(
         style = "display: inline-block; margin: 5px; min-width: 120px;",
         selectInput(
@@ -1636,8 +1770,43 @@ server <- function(input, output, session) {
       )
     })
 
-
     do.call(tagList, picker_list)
+  })
+
+  # Contrast Mode Gene Encoding UI
+  output$ui_settings_contrast_gene_encoding <- renderUI({
+    ds_enc <- input$settings_contrast_dataset_encoding
+    if (is.null(ds_enc)) return(NULL)
+    
+    # Available aesthetics
+    avail_color <- !grepl("color", ds_enc)
+    avail_line  <- !grepl("linetype", ds_enc)
+    avail_shape <- !grepl("shape", ds_enc)
+    
+    choices <- c("None" = "none")
+    if (avail_color) choices <- c(choices, "Color" = "color")
+    if (avail_line) choices <- c(choices, "Linetype" = "linetype")
+    if (avail_shape) choices <- c(choices, "Shape" = "shape")
+    
+    if (avail_color && avail_shape) choices <- c(choices, "Color + Shape" = "color_shape")
+    if (avail_line && avail_shape) choices <- c(choices, "Linetype + Shape" = "linetype_shape")
+    if (avail_color && avail_line) choices <- c(choices, "Color + Linetype" = "color_linetype")
+    if (avail_color && avail_line && avail_shape) choices <- c(choices, "Color + Linetype + Shape" = "color_linetype_shape")
+    
+    # Keep current selection if possible
+    curr_gene <- isolate(plot_settings$contrast_gene_encoding) %||% "linetype"
+    if (!(curr_gene %in% choices)) {
+      # Fallback
+      if (avail_line) curr_gene <- "linetype"
+      else if (avail_shape) curr_gene <- "shape"
+      else if (avail_color) curr_gene <- "color"
+      else curr_gene <- "none"
+    }
+    
+    radioButtons("settings_contrast_gene_encoding", "Gene encoded by:",
+                 choices = choices,
+                 selected = curr_gene,
+                 inline = TRUE)
   })
 
   # Gene Color Pickers Implementation
@@ -1811,6 +1980,14 @@ server <- function(input, output, session) {
     plot_settings$encoding_multigene_color <- input$settings_multigene_color
   })
 
+  observeEvent(input$settings_contrast_dataset_encoding, {
+    plot_settings$contrast_dataset_encoding <- input$settings_contrast_dataset_encoding
+  })
+
+  observeEvent(input$settings_contrast_gene_encoding, {
+    plot_settings$contrast_gene_encoding <- input$settings_contrast_gene_encoding
+  })
+
   observeEvent(input$settings_similarity_color, {
     plot_settings$encoding_similarity_color <- input$settings_similarity_color
   })
@@ -1965,6 +2142,29 @@ server <- function(input, output, session) {
   observeEvent(input$settings_global_transform, {
     plot_settings$global_transform <- input$settings_global_transform
   })
+  
+  observeEvent(input$settings_sc_dataset, {
+    plot_settings$sc_dataset <- input$settings_sc_dataset
+  })
+  observeEvent(input$settings_contrast_mode_enabled, {
+    plot_settings$contrast_mode_enabled <- input$settings_contrast_mode_enabled
+  })
+  observeEvent(input$settings_contrast_type, {
+    plot_settings$contrast_type <- input$settings_contrast_type
+  })
+
+  observeEvent(input$settings_contrast_transform, {
+    plot_settings$contrast_transform <- input$settings_contrast_transform
+  })
+
+  # Line aesthetics observers
+  observeEvent(input$settings_line_thickness, {
+    plot_settings$line_thickness <- input$settings_line_thickness
+  })
+
+  observeEvent(input$settings_line_type, {
+    plot_settings$line_type <- input$settings_line_type
+  })
 
   # Publication Settings Observers
   observeEvent(input$settings_viz_mode, {
@@ -2003,55 +2203,69 @@ server <- function(input, output, session) {
     plot_settings$export_height <- input$settings_export_height
   })
 
-  # update species_colors directly when individual color pickers change
+  species_color_obs_manager <- reactiveValues(observers = list())
+  species_shape_obs_manager <- reactiveValues(observers = list())
+
+  # Efficiently manage species color and shape observers
   observe({
     req(plot_settings$initialized)
-    # skip if palette update is in progress to avoid reactive loop
-    # use isolate to prevent flag changes from re-triggering this observer
-    if (isTRUE(isolate(plot_settings$updating_colors_from_palette))) {
-      return()
-    }
-    config <- isolate(current_species_config())
-    species_list <- sapply(config, function(x) x$short)
-
-    for (sp in species_list) {
-      input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
-      val <- input[[input_id]]
-      # isolate stored color read so this observer only triggers on input changes
-      stored_color <- isolate(plot_settings$species_colors[[sp]])
-      if (!is.null(val) && !is.null(stored_color)) {
-        if (val != stored_color) {
-          plot_settings$species_colors[[sp]] <- val
-          # also update full name key
-          sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
-          if (!is.null(sp_full)) {
-            plot_settings$species_colors[[sp_full]] <- val
-          }
-        }
-      }
-    }
-  })
-
-  # update species_shapes directly when individual shape pickers change
-  observe({
-    req(plot_settings$initialized)
+    
+    # We depend on contrast settings which dictates the species list
+    contrast_enabled <- plot_settings$contrast_mode_enabled
+    contrast_type <- plot_settings$contrast_type
     config <- current_species_config()
-    species_list <- sapply(config, function(x) x$short)
-
-    for (sp in species_list) {
-      input_id <- paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp))
-      val <- input[[input_id]]
-      if (!is.null(val) && !is.null(plot_settings$species_shapes[[sp]])) {
-        if (as.integer(val) != plot_settings$species_shapes[[sp]]) {
-          plot_settings$species_shapes[[sp]] <- as.integer(val)
-          # also update full name key
-          sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
-          if (!is.null(sp_full)) {
-            plot_settings$species_shapes[[sp_full]] <- as.integer(val)
-          }
+    
+    isolate({
+      species_list <- sapply(config, function(x) x$short)
+      if (isTRUE(contrast_enabled)) {
+        species_list <- species_list[names(species_list) != "sc"]
+        if (contrast_type == "contrast_2026") {
+          species_list <- c(species_list, "WT 2026" = "WT 2026", "Mutant 2026" = "Mutant 2026")
+        } else {
+          species_list <- c(species_list, "WT 2023" = "WT 2023", "WT 2026" = "WT 2026")
         }
       }
-    }
+
+      # Clean up old observers
+      lapply(species_color_obs_manager$observers, function(o) o$destroy())
+      lapply(species_shape_obs_manager$observers, function(o) o$destroy())
+      
+      species_color_obs_manager$observers <- lapply(species_list, function(sp) {
+        input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
+        observeEvent(input[[input_id]], {
+          val <- input[[input_id]]
+          if (!is.null(val) && val != "" && !isTRUE(plot_settings$updating_colors_from_palette)) {
+            plot_settings$species_colors[[sp]] <- val
+            # also update full name key if it maps to a base species
+            sp_full <- NULL
+            if (sp %in% sapply(config, function(x) x$short)) {
+              sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
+            }
+            if (!is.null(sp_full)) {
+              plot_settings$species_colors[[sp_full]] <- val
+            }
+          }
+        }, ignoreInit = TRUE, ignoreNULL = TRUE)
+      })
+
+      species_shape_obs_manager$observers <- lapply(species_list, function(sp) {
+        input_id <- paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp))
+        observeEvent(input[[input_id]], {
+          val <- input[[input_id]]
+          if (!is.null(val)) {
+            plot_settings$species_shapes[[sp]] <- as.integer(val)
+            # also update full name key if it maps to a base species
+            sp_full <- NULL
+            if (sp %in% sapply(config, function(x) x$short)) {
+              sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
+            }
+            if (!is.null(sp_full)) {
+              plot_settings$species_shapes[[sp_full]] <- as.integer(val)
+            }
+          }
+        }, ignoreInit = TRUE, ignoreNULL = TRUE)
+      })
+    })
   })
 
   # apply preset
@@ -2099,7 +2313,7 @@ server <- function(input, output, session) {
   # species data cache with composite key
   species_data_cache <- new.env()
 
-  get_species_data <- function(species_id) {
+  get_species_data <- function(species_id, force_no_contrast = FALSE) {
     if (is.null(species_id) || length(species_id) == 0) {
       return(NULL)
     }
@@ -2113,37 +2327,156 @@ server <- function(input, output, session) {
     }
 
     # composite cache key includes data source to prevent stale data
-    cache_key <- paste(species_id, current_source, sep = "_")
+    if (species_id == "sc") {
+      if (isTRUE(plot_settings$contrast_mode_enabled)) {
+        if (!force_no_contrast) {
+          sc_dataset_setting <- paste0("contrast_", plot_settings$contrast_type %||% "contrast_2026")
+        } else {
+          sc_dataset_setting <- "yH545"
+        }
+      } else {
+        sc_dataset_setting <- plot_settings$sc_dataset %||% "2023"
+      }
+    } else {
+      sc_dataset_setting <- "NA"
+    }
+    
+    cache_key <- paste(species_id, current_source, sc_dataset_setting, sep = "_")
 
     if (!exists(cache_key, envir = species_data_cache)) {
-      if (species_id %in% names(current_data)) {
+      if (species_id == "sc") {
+        base_id <- "sc"
+        if (!base_id %in% names(current_data)) return(NULL)
+        
         sp_config <- config[[species_id]]
-
-        # strategy 1: direct naming (standard for uploaded data and cg)
+        
+        data <- list(
+          species_name = if (!is.null(sp_config$short)) sp_config$short else species_id,
+          anno = current_data$sc$sc_anno_2023
+        )
+        
+        contrast_mode <- isTRUE(plot_settings$contrast_mode_enabled) && !force_no_contrast
+        
+        if (isTRUE(plot_settings$contrast_mode_enabled) && force_no_contrast) {
+          sc_dataset_choice <- "yH545"
+        } else {
+          sc_dataset_choice <- plot_settings$sc_dataset %||% "2023"
+        }
+        
+        contrast_type <- plot_settings$contrast_type %||% "contrast_2026"
+        
+        if (contrast_mode) {
+          if (contrast_type == "contrast_2026") {
+            # Joint 2026 Data (WT vs Mut)
+            full_sample_info <- current_data$sc$sc_sample_info_2026
+            full_lcpm <- current_data$sc$sc_lcpm_2026
+            full_rlog <- current_data$sc$sc_rlog_2026
+            
+            keep_idx <- rep(TRUE, nrow(full_sample_info))
+            if ("Condition" %in% names(full_sample_info)) {
+              keep_idx <- keep_idx & (full_sample_info$Condition == "noPi")
+            }
+            
+            subset_info <- full_sample_info[keep_idx, , drop = FALSE]
+            # Assign Contrast_Series
+            subset_info$Contrast_Series <- ifelse(grepl("^yH545\\.", subset_info$Sample), "WT 2026", "Mutant 2026")
+            
+            data$sample_info <- as_tibble(subset_info)
+            keep_samples <- data$sample_info$Sample
+            data$lcpm <- full_lcpm[, keep_samples, drop = FALSE]
+            data$rlog <- full_rlog[, keep_samples, drop = FALSE]
+            
+          } else if (contrast_type == "contrast_wt") {
+            # 2023 WT vs 2026 WT
+            # 2023 base
+            info_2023 <- current_data$sc$sc_sample_info_2023
+            info_2023$Contrast_Series <- "WT 2023"
+            
+            # 2026 WT
+            full_sample_info <- current_data$sc$sc_sample_info_2026
+            keep_idx <- grepl("^yH545\\.", full_sample_info$Sample)
+            if ("Condition" %in% names(full_sample_info)) {
+              keep_idx <- keep_idx & (full_sample_info$Condition == "noPi")
+            }
+            info_2026 <- full_sample_info[keep_idx, , drop = FALSE]
+            info_2026$Contrast_Series <- "WT 2026"
+            
+            # Align columns for rbind
+            common_cols <- intersect(names(info_2023), names(info_2026))
+            info_2023_sub <- info_2023[, common_cols, drop = FALSE]
+            info_2026_sub <- info_2026[, common_cols, drop = FALSE]
+            
+            data$sample_info <- as_tibble(rbind(info_2023_sub, info_2026_sub))
+            
+            # Cbind matrices
+            lcpm_2023 <- current_data$sc$sc_lcpm_2023
+            rlog_2023 <- current_data$sc$sc_rlog_2023
+            
+            lcpm_2026 <- current_data$sc$sc_lcpm_2026[, info_2026$Sample, drop = FALSE]
+            rlog_2026 <- current_data$sc$sc_rlog_2026[, info_2026$Sample, drop = FALSE]
+            
+            # Only keep common genes
+            common_genes <- intersect(rownames(lcpm_2023), rownames(lcpm_2026))
+            
+            data$lcpm <- cbind(lcpm_2023[common_genes, ], lcpm_2026[common_genes, ])
+            data$rlog <- cbind(rlog_2023[common_genes, ], rlog_2026[common_genes, ])
+          }
+        } else {
+          # Standard Single Dataset Mode
+          if (sc_dataset_choice == "2023") {
+            data$sample_info <- as_tibble(current_data$sc$sc_sample_info_2023)
+            data$lcpm <- current_data$sc$sc_lcpm_2023
+            data$rlog <- current_data$sc$sc_rlog_2023
+          } else {
+            full_sample_info <- current_data$sc$sc_sample_info_2026
+            full_lcpm <- current_data$sc$sc_lcpm_2026
+            full_rlog <- current_data$sc$sc_rlog_2026
+            
+            strain_regex <- paste0("^", sc_dataset_choice, "\\.")
+            keep_idx <- grepl(strain_regex, full_sample_info$Sample)
+            if ("Condition" %in% names(full_sample_info)) {
+              keep_idx <- keep_idx & (full_sample_info$Condition == "noPi")
+            }
+            
+            if (!any(keep_idx)) stop(paste("Regex/filter mismatch: no samples found for", sc_dataset_choice))
+            
+            subset_info <- full_sample_info[keep_idx, , drop = FALSE]
+            data$sample_info <- as_tibble(subset_info)
+            
+            keep_samples <- data$sample_info$Sample
+            data$lcpm <- full_lcpm[, keep_samples, drop = FALSE]
+            data$rlog <- full_rlog[, keep_samples, drop = FALSE]
+          }
+        }
+        
+        data$sc_anno <- data$anno
+        data$sc_lcpm <- data$lcpm
+        data$sc_sample_info <- data$sample_info
+        data$sc_rlog <- data$rlog
+        
+      } else if (species_id %in% names(current_data)) {
+        sp_config <- config[[species_id]]
+        
         if (!is.null(current_data[[species_id]]$lcpm) || !is.null(current_data[[species_id]]$rlog)) {
           data <- current_data[[species_id]]
-
+          
           if (is.null(data$species_name)) {
             data$species_name <- if (!is.null(sp_config$short)) sp_config$short else species_id
           }
-
-          # add prefixed aliases for backward compatibility
+          
           for (key in names(data)) {
             prefixed_key <- paste0(species_id, "_", key)
             if (is.null(data[[prefixed_key]])) {
               data[[prefixed_key]] <- data[[key]]
             }
           }
-        }
-        # strategy 2: prefixed naming (for original sc, kl, ca data)
-        else {
+        } else {
           data <- list(
             species_name = if (!is.null(sp_config$short)) sp_config$short else species_id
           )
-
+          
           prefixed_keys <- names(current_data[[species_id]])
           prefix_pattern <- paste0("^", species_id, "_")
-
           for (key in prefixed_keys) {
             if (grepl(prefix_pattern, key)) {
               base_name <- sub(prefix_pattern, "", key)
@@ -2152,22 +2485,22 @@ server <- function(input, output, session) {
             }
           }
         }
-
-        # verify expression matrix exists
-        has_expr_data <- any(sapply(names(data), function(nm) {
-          obj <- data[[nm]]
-          is.matrix(obj) || (is.data.frame(obj) && ncol(obj) > 5)
-        }))
-
-        if (!has_expr_data) {
-          warning(paste("No expression data found for species:", species_id))
-          return(NULL)
-        }
-
-        assign(cache_key, data, envir = species_data_cache)
       } else {
         return(NULL)
       }
+
+      # verify expression matrix exists
+      has_expr_data <- any(sapply(names(data), function(nm) {
+        obj <- data[[nm]]
+        is.matrix(obj) || (is.data.frame(obj) && ncol(obj) > 5)
+      }))
+
+      if (!has_expr_data) {
+        warning(paste("No expression data found for species:", species_id))
+        return(NULL)
+      }
+
+      assign(cache_key, data, envir = species_data_cache)
     }
     get(cache_key, envir = species_data_cache)
   }
@@ -2203,7 +2536,7 @@ server <- function(input, output, session) {
     config <- current_species_config()
     current_data <- get_all_species_data()
     for (species_id in names(config)) {
-      species_data <- get_species_data(species_id)
+      species_data <- get_species_data(species_id, force_no_contrast = TRUE)
       result <- query_gene_flexible(gene, species_data, current_data)
       if (!is.null(result) && result$source != "none") {
         found_in_species <- species_id
@@ -2866,7 +3199,7 @@ server <- function(input, output, session) {
     plot_data_list <- list()
 
     for (species_code in names(selected_genes_list)) {
-      species_data <- get_species_data(species_code)
+      species_data <- get_species_data(species_code, force_no_contrast = FALSE)
       gene_ids <- selected_genes_list[[species_code]]
       expr_matrix <- get_expression_matrix(species_code, plot_settings$global_transform, species_data)
 
@@ -2899,6 +3232,13 @@ server <- function(input, output, session) {
             Replicate = species_data$sample_info$Replicate,
             Expression = as.numeric(expr_matrix[gene_id_to_use, ])
           )
+          
+          if ("Contrast_Series" %in% names(species_data$sample_info)) {
+            expr_data$Contrast_Series <- species_data$sample_info$Contrast_Series
+          } else {
+            expr_data$Contrast_Series <- NA
+          }
+          
           plot_data_list[[length(plot_data_list) + 1]] <- expr_data
         }
       }
@@ -2948,23 +3288,37 @@ server <- function(input, output, session) {
         select(-Baseline)
     }
 
-    # build color map using SpeciesCode for reliable lookup
-    species_color_map <- list()
-    species_shape_map <- list()
-    for (sp_code in unique(plot_data$SpeciesCode)) {
-      sp_short <- config[[sp_code]]$short
-      species_color_map[[sp_code]] <- resolve_species_color(sp_short, settings_colors, "#808080")
-      species_shape_map[[sp_code]] <- resolve_species_shape(sp_short, settings_shapes, 16L)
+    # setup EntityID for Contrast Series mapping
+    plot_data$EntityID <- plot_data$SpeciesCode
+    if ("Contrast_Series" %in% names(plot_data)) {
+      is_contrast <- !is.na(plot_data$Contrast_Series)
+      plot_data$EntityID[is_contrast] <- plot_data$Contrast_Series[is_contrast]
+      plot_data$Species[is_contrast] <- plot_data$Contrast_Series[is_contrast]
+    }
+
+    # build color map using EntityID for reliable lookup
+    entity_color_map <- list()
+    entity_shape_map <- list()
+    for (ent in unique(plot_data$EntityID)) {
+      if (ent %in% names(config)) {
+        sp_short <- config[[ent]]$short
+        entity_color_map[[ent]] <- resolve_species_color(sp_short, settings_colors, "#808080")
+        entity_shape_map[[ent]] <- resolve_species_shape(sp_short, settings_shapes, 16L)
+      } else {
+        # Contrast series like "WT 2026"
+        entity_color_map[[ent]] <- if (!is.null(settings_colors[[ent]])) settings_colors[[ent]] else if (ent == "WT 2026") "#E69F00" else if (ent == "Mutant 2026") "#56B4E9" else if (ent == "WT 2023") "#009E73" else "#808080"
+        entity_shape_map[[ent]] <- if (!is.null(settings_shapes[[ent]])) as.integer(settings_shapes[[ent]]) else if (ent == "WT 2026") 16L else if (ent == "Mutant 2026") 17L else if (ent == "WT 2023") 15L else 16L
+      }
     }
 
     plot_data$GeneSpecies <- paste(plot_data$Gene, "-", plot_data$Species)
     plot_data$GeneSpeciesRep <- paste(plot_data$GeneSpecies, "Rep", plot_data$Replicate)
-    plot_data$SpeciesColor <- sapply(plot_data$SpeciesCode, function(sc) species_color_map[[sc]])
-    plot_data$SpeciesShape <- sapply(plot_data$SpeciesCode, function(sc) species_shape_map[[sc]])
+    plot_data$SpeciesColor <- sapply(plot_data$EntityID, function(sc) entity_color_map[[sc]])
+    plot_data$SpeciesShape <- sapply(plot_data$EntityID, function(sc) entity_shape_map[[sc]])
 
     unique_combinations <- unique(plot_data$GeneSpecies)
     unique_genes <- unique(plot_data$Gene)
-    unique_species <- unique(plot_data$SpeciesCode)
+    unique_species <- unique(plot_data$EntityID)
     n_genes <- length(unique_genes)
     n_species <- length(unique_species)
 
@@ -2973,9 +3327,23 @@ server <- function(input, output, session) {
     rep_labels <- c()
     for (combo in unique_combinations) {
       row_match <- plot_data[plot_data$GeneSpecies == combo, ][1, ]
-      base_color <- species_color_map[[row_match$SpeciesCode]]
-      color_vector <- c(color_vector, base_color, adjustcolor(base_color, alpha.f = 0.6))
-      rep_labels <- c(rep_labels, paste(combo, "Rep 1"), paste(combo, "Rep 2"))
+      base_color <- entity_color_map[[row_match$EntityID]]
+      
+      combo_reps <- sort(unique(plot_data$Replicate[plot_data$GeneSpecies == combo]))
+      n_reps <- length(combo_reps)
+      
+      if (n_reps == 1) {
+        color_vector <- c(color_vector, base_color)
+        rep_labels <- c(rep_labels, paste(combo, "Rep", combo_reps[1]))
+      } else if (n_reps == 2) {
+        color_vector <- c(color_vector, base_color, adjustcolor(base_color, alpha.f = 0.6))
+        rep_labels <- c(rep_labels, paste(combo, "Rep", combo_reps[1]), paste(combo, "Rep", combo_reps[2]))
+      } else {
+        alpha_values <- seq(1, 0.4, length.out = n_reps)
+        rep_colors <- sapply(alpha_values, function(a) adjustcolor(base_color, alpha.f = a))
+        color_vector <- c(color_vector, rep_colors)
+        rep_labels <- c(rep_labels, paste(combo, "Rep", combo_reps))
+      }
     }
     names(color_vector) <- rep_labels
 
@@ -2988,9 +3356,9 @@ server <- function(input, output, session) {
       gene_shapes <- setNames(SHAPES_DEFAULT[1:n_genes], unique_genes)
       shape_scale <- scale_shape_manual(values = gene_shapes, name = "Gene")
     } else if (encoding_secondary == "shape" && n_species <= 6) {
-      plot_data$ShapeVar <- plot_data$SpeciesCode
+      plot_data$ShapeVar <- plot_data$EntityID
       shape_aes <- aes(shape = ShapeVar)
-      species_shape_vec <- sapply(unique_species, function(sc) species_shape_map[[sc]])
+      species_shape_vec <- sapply(unique_species, function(sc) entity_shape_map[[sc]])
       names(species_shape_vec) <- unique_species
       shape_scale <- scale_shape_manual(values = species_shape_vec, name = "Species")
     }
@@ -3012,7 +3380,7 @@ server <- function(input, output, session) {
       aes(
         x = Timepoint, y = Expression, color = GeneSpeciesRep, group = GeneSpeciesRep,
         text = paste(
-          "Gene:", Gene, "<br>Species:", Species, "<br>Replicate:", Replicate,
+          "Gene:", Gene, "<br>Species/Series:", Species, "<br>Replicate:", Replicate,
           "<br>Time:", Timepoint, paste0("<br>", expr_label, ": "), round(Expression, 2)
         )
       )
@@ -3023,15 +3391,21 @@ server <- function(input, output, session) {
       p <- p + shape_aes
     }
 
+    # global line aesthetics
+    global_thickness <- plot_settings$line_thickness %||% 1
+
     # add linetype aesthetic if configured
     if (!is.null(linetype_aes)) {
       p <- p + linetype_aes
+      p <- p + geom_line(linewidth = global_thickness, alpha = 0.9)
+    } else {
+      global_type <- plot_settings$line_type %||% "solid"
+      p <- p + geom_line(linewidth = global_thickness, linetype = global_type, alpha = 0.9)
     }
 
     p <- p +
       geom_point(size = 3, alpha = 0.8) +
-      geom_line(linewidth = 1.2, alpha = 0.9) +
-      scale_color_manual(values = color_vector, name = "Gene - Species", breaks = names(color_vector), labels = names(color_vector))
+      scale_color_manual(values = color_vector, name = "Gene - Species/Series", breaks = names(color_vector), labels = names(color_vector))
 
     # add shape scale if configured
     if (!is.null(shape_scale)) {
@@ -3156,7 +3530,7 @@ server <- function(input, output, session) {
     config <- current_species_config()
     species_data_list <- list()
     for (species_id in names(config)) {
-      species_data_list[[species_id]] <- get_species_data(species_id)
+      species_data_list[[species_id]] <- get_species_data(species_id, force_no_contrast = TRUE)
     }
 
     plot_state$heatmap_data <- list(
@@ -5031,11 +5405,15 @@ server <- function(input, output, session) {
       config <- current_species_config()
       species_list <- names(config)
     } else {
-      species_list <- c(input$ridgeline_species)
+      resolved_species <- input$ridgeline_species
+      if (resolved_species == "sc" && isTRUE(plot_settings$contrast_mode_enabled)) {
+        showNotification("Contrast mode active. Using base 2026 WT dataset for Ridgeline.", type = "warning", duration = 5)
+      }
+      species_list <- c(resolved_species)
     }
 
     for (species_id in species_list) {
-      species_data_list[[species_id]] <- get_species_data(species_id)
+      species_data_list[[species_id]] <- get_species_data(species_id, force_no_contrast = TRUE)
     }
 
     plot_state$ridgeline_data <- list(
@@ -5514,13 +5892,14 @@ server <- function(input, output, session) {
 
     species_data_list <- list()
     if (input$ridgeline_species == "all") {
-      config <- current_species_config()
-      species_list <- names(config)
+      species_list <- names(current_species_config())
     } else {
-      species_list <- c(input$ridgeline_species)
+      resolved_species <- input$ridgeline_species
+      species_list <- c(resolved_species)
     }
+
     for (species_id in species_list) {
-      species_data_list[[species_id]] <- get_species_data(species_id)
+      species_data_list[[species_id]] <- get_species_data(species_id, force_no_contrast = TRUE)
     }
 
     p <- if (input$ridgeline_view == "distribution") {
