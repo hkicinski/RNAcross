@@ -8,8 +8,9 @@ app_version_history <- list(
     ),
     features   = c(
       "S. cerevisiae Dataset Toggle: Added a new option in the Plot Settings modal under Expression Data Source to globally toggle between the 2023 data, WT S288C 2026 (yH545) data, and Δppx1 Δppn1 S288C 2026 (yH1053) data.",
-      "Contrast Modes: Side-by-side comparison modes (2026 WT vs Mutant, and 2023 WT vs 2026 WT) available with optional display scaling (Z-score, Center).",
-      "Dataset Persistence: The selected S. cerevisiae dataset is now cached in your browser session and will persist across app reloads."
+      "Contrast Modes: New side-by-side comparison views for S. cerevisiae. Compare 2026 WT against the 2026 Δppx1 Δppn1 (PPN1/PPX1 double-deletion) strain, or 2026 WT against 2023 WT (S288C), each with optional display scaling (Z-score or centered).",
+      "Dataset Persistence: The selected S. cerevisiae dataset is now cached in your browser session and will persist across app reloads.",
+      "Redesigned Intro Animation: The splash screen now reveals an interactive phylogenetic cladogram that grows upward from the click point as you click through the four yeast species, replacing the previous RNA reveal. A new click sound effect plays as it grows."
     ),
     bug_fixes  = c(),
     show_changelog = TRUE,

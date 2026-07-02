@@ -246,6 +246,33 @@ ui <- page_navbar(
         to { transform: translate(200%, 200%) scale(0.1); opacity: 0; }
       }
 
+      /* Phylogenetic cladogram reveal (grows upward, click upon click) */
+      .clado-branch {
+        transition: stroke-dashoffset 0.6s ease-out;
+      }
+      .clado-leaf {
+        opacity: 0;
+        transform: scale(0.4);
+        transform-box: fill-box;
+        transform-origin: center;
+        transition: opacity 0.5s ease, transform 0.5s ease;
+      }
+      .clado-leaf.show {
+        opacity: 1;
+        transform: scale(1);
+      }
+      .clado-gem {
+        opacity: 0;
+        transform: scale(0.2);
+        transform-box: fill-box;
+        transform-origin: center;
+        transition: opacity 0.45s ease, transform 0.45s ease;
+      }
+      .clado-gem.show {
+        opacity: 1;
+        transform: scale(1);
+      }
+
       /*hint text animation hidden for now */
       #interaction-hint {
         display: none !important;
@@ -301,8 +328,8 @@ ui <- page_navbar(
       # hidden audio element for sound effect
       tags$audio(
         id = "whoosh-sound",
-        src = "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTGH0fPTgjMGHm7A7+OZURE",
-        type = "audio/wav",
+        src = "47313572-sci-fi-sfx16-350847.mp3",
+        type = "audio/mpeg",
         preload = "auto"
       )
     ),
@@ -359,6 +386,10 @@ ui <- page_navbar(
     let splashTimer;
     let hasInteracted = false;
 
+    // Cladogram (phylogenetic reveal) state
+    var CLADO_MAXGEN = 4, cladoCurGen = 0, cladoWantGen = 0;
+    var cladoBuilt = false, cladoGens = [], cladoLeaves = [], cladoGem = null;
+
     // Start the auto-hide timer
     function startSplashTimer() {
       splashTimer = setTimeout(function() {
@@ -383,6 +414,9 @@ ui <- page_navbar(
       svg.removeAttribute("height");
       svg.style.width = "100%";
       svg.style.height = "100%";
+
+      // Pre-build the (hidden) phylogenetic cladogram so clicks can grow it
+      buildCladogram(svg);
 
       const cells = svg.querySelectorAll(\'#cells > g[id^="cell-"], #cells-wrapper > g[id^="cell-"], g[id*="yeast"]\');
       const cellsWrapper = svg.querySelector("#cells-wrapper, #cells");
@@ -422,42 +456,163 @@ ui <- page_navbar(
       }
     }
 
-    // Handle yeast click
-    function handleYeastClick() {
-      if (hasInteracted) return; // Prevent multiple clicks
-      hasInteracted = true;
-
-      // Clear the auto-hide timer
-      clearTimeout(splashTimer);
-
-      // Play sound effect
-      const audio = document.getElementById("whoosh-sound");
+    // Play the click sound (restart so rapid clicks retrigger it)
+    function playClickSound() {
+      var audio = document.getElementById("whoosh-sound");
       if (audio) {
-        audio.play().catch(e => console.log("Audio play failed:", e));
+        try { audio.currentTime = 0; } catch (e) {}
+        var p = audio.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+    }
+
+    // Small SVG element factory
+    function mkSVG(tag, attrs) {
+      var el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (var k in attrs) el.setAttribute(k, attrs[k]);
+      return el;
+    }
+
+    // Build the hidden phylogenetic cladogram in the logo SVG coordinate space:
+    // rooted at the yeast hub (~421,540), climbing upward, and kept left of the
+    // RNACROSS wordmark (x>=735) so it never overlaps the actual logo.
+    function buildCladogram(svg) {
+      if (cladoBuilt || !svg) return;
+      cladoBuilt = true;
+
+      // Ensure a soft-glow filter exists for the halo layer
+      var defs = svg.querySelector("defs");
+      if (defs && !svg.querySelector("#rnaSoft")) {
+        var f = mkSVG("filter", { id: "rnaSoft", x: "-60%", y: "-60%", width: "220%", height: "220%" });
+        f.appendChild(mkSVG("feGaussianBlur", { stdDeviation: 2.4 }));
+        defs.appendChild(f);
       }
 
-      // Get SVG elements
+      var rootX = 421, rootY = 540, topY = 95, D = CLADO_MAXGEN;
+      var leftX = 160, rightX = 680;
+      var pal = ["#00F5FF", "#FF006E", "#8338EC", "#FFBE0B"];
+      var gradId = ["neonBlue", "neonPink", "neonPurple", "neonOrange"];
+      var nleaf = Math.pow(2, D);
+
+      function gy(g) { return rootY - (rootY - topY) * g / D; }
+      function cladeOf(g, i) { return g >= 2 ? Math.ceil((i + 1) / Math.pow(2, g - 2)) : 0; }
+
+      // node x-positions per generation (bottom-up midpoints)
+      var nodes = [];
+      nodes[D] = [];
+      for (var i0 = 0; i0 < nleaf; i0++) nodes[D][i0] = leftX + (rightX - leftX) * i0 / (nleaf - 1);
+      for (var g0 = D - 1; g0 >= 0; g0--) {
+        var pn = Math.pow(2, g0);
+        nodes[g0] = [];
+        for (var j = 0; j < pn; j++) nodes[g0][j] = (nodes[g0 + 1][2 * j] + nodes[g0 + 1][2 * j + 1]) / 2;
+      }
+
+      var grp = mkSVG("g", { id: "cladogram" });
+      for (var gi = 1; gi <= D; gi++) cladoGens[gi] = [];
+
+      for (var g = 1; g <= D; g++) {
+        var nc = Math.pow(2, g);
+        for (var i = 0; i < nc; i++) {
+          var p = Math.floor(i / 2);
+          var x1 = nodes[g - 1][p], y1 = gy(g - 1), x2 = nodes[g][i], y2 = gy(g);
+          var cl = cladeOf(g, i);
+          var col = cl === 0 ? "#e6f7ff" : pal[cl - 1];
+          var halo = cl === 0 ? "#79d8ff" : pal[cl - 1];
+          var d = "M" + x1 + "," + y1 + " L" + x2 + "," + y2;
+          var hp = mkSVG("path", { d: d, pathLength: 100, "class": "clado-branch", stroke: halo, "stroke-width": 7, fill: "none", opacity: 0.22, filter: "url(#rnaSoft)", "stroke-linecap": "round" });
+          var cp = mkSVG("path", { d: d, pathLength: 100, "class": "clado-branch", stroke: col, "stroke-width": 3.4, fill: "none", opacity: 0.95, "stroke-linecap": "round" });
+          hp.style.strokeDasharray = 100; hp.style.strokeDashoffset = 100;
+          cp.style.strokeDasharray = 100; cp.style.strokeDashoffset = 100;
+          grp.appendChild(hp); grp.appendChild(cp);
+          cladoGens[g].push(hp); cladoGens[g].push(cp);
+
+          if (g === D) {
+            var cl2 = cladeOf(D, i);
+            var lg = mkSVG("g", { "class": "clado-leaf" });
+            if (i % 4 === 2) {
+              var inner = mkSVG("g", { transform: "translate(" + x2 + "," + y2 + ")" });
+              inner.appendChild(mkSVG("ellipse", { rx: 15, ry: 17, fill: "#000814", stroke: "url(#" + gradId[cl2 - 1] + ")", "stroke-width": 4 }));
+              inner.appendChild(mkSVG("circle", { r: 7, fill: pal[cl2 - 1], opacity: 0.5, filter: "url(#rnaSoft)" }));
+              inner.appendChild(mkSVG("circle", { r: 4, fill: pal[cl2 - 1], opacity: 0.95 }));
+              lg.appendChild(inner);
+            } else {
+              lg.appendChild(mkSVG("circle", { cx: x2, cy: y2, r: 4.5, fill: pal[cl2 - 1], opacity: 0.9 }));
+            }
+            grp.appendChild(lg);
+            cladoLeaves.push(lg);
+          }
+        }
+      }
+
+      // Root gem (common ancestor / orthogroup mark; echoes the brand diamond)
+      cladoGem = mkSVG("g", { "class": "clado-gem" });
+      cladoGem.appendChild(mkSVG("polygon", { points: rootX + "," + (rootY - 20) + " " + (rootX + 20) + "," + rootY + " " + rootX + "," + (rootY + 20) + " " + (rootX - 20) + "," + rootY, fill: "#00141c", stroke: "url(#neonGrad)", "stroke-width": 5 }));
+      cladoGem.appendChild(mkSVG("circle", { cx: rootX, cy: rootY, r: 5, fill: "#FFFFFF" }));
+      grp.appendChild(cladoGem);
+
+      // Insert behind the wordmark so the actual logo always stays on top
+      var typo = svg.querySelector("#modern-typography");
+      if (typo) svg.insertBefore(grp, typo); else svg.appendChild(grp);
+    }
+
+    // Draw one generation of branches (and pop the leaves on the final one)
+    function revealGen(k) {
+      var arr = cladoGens[k];
+      if (arr) arr.forEach(function (el) { el.style.strokeDashoffset = 0; });
+      if (k >= CLADO_MAXGEN) cladoLeaves.forEach(function (l) { l.classList.add("show"); });
+    }
+    function growTo(n) {
+      while (cladoCurGen < n) { cladoCurGen++; revealGen(cladoCurGen); }
+    }
+    function bloomGem() { if (cladoGem) cladoGem.classList.add("show"); }
+
+    // Subsequent clicks grow the tree one generation each
+    function growthClick(e) {
+      if (e && e.target && e.target.closest && e.target.closest("#splash-skip")) return;
+      playClickSound();
+      if (cladoWantGen < CLADO_MAXGEN) { cladoWantGen++; growTo(cladoWantGen); }
+    }
+
+    // Handle the first yeast click: scatter the cells, then start the cladogram
+    function handleYeastClick() {
+      if (hasInteracted) return; // first interaction only
+      hasInteracted = true;
+      clearTimeout(splashTimer);
+      playClickSound();
+
       const svgElement = document.querySelector("#splash-logo svg, #svg-wrapper svg");
       const cellsWrapper = svgElement.querySelector("#cells-wrapper, #cells");
       const cells = svgElement.querySelectorAll(\'#cells > g[id^="cell-"], #cells-wrapper > g[id^="cell-"]\');
 
-      // Add spinning animation
-      if (cellsWrapper) {
-        cellsWrapper.classList.add("spinning-animation");
-      }
-
-      // Create glowing trails
+      if (cellsWrapper) cellsWrapper.classList.add("spinning-animation");
       createGlowTrails();
 
-      // After spin, disperse cells
-      setTimeout(() => {
-        disperseSVGCells(cells);
+      // Immediately remove the old RNA "spaghetti", its flow particles, and the
+      // central lens so none of it flashes while the cells spin and fly away.
+      var oldRna = [];
+      ["#rna-helixes", "#rna-flow-particles"].forEach(function (sel) {
+        var el = svgElement.querySelector(sel); if (el) oldRna.push(el);
+      });
+      // central convergence lens = the non-cell <g> inside #cells
+      svgElement.querySelectorAll("#cells > g:not([id])").forEach(function (el) { oldRna.push(el); });
+      oldRna.forEach(function (el) { el.style.transition = "opacity 0.2s ease"; el.style.opacity = 0; });
 
-        // Hide splash after dispersal
-        setTimeout(() => {
-          hideSplash();
-        }, 1000);
-      }, 800);
+      // The cells fly off, then the cladogram roots where they were (gem + first split)
+      setTimeout(function () { disperseSVGCells(cells); }, 800);
+      setTimeout(function () { bloomGem(); growTo(1); }, 850);
+      cladoWantGen = 1;
+
+      // After the bloom, further clicks grow it (delayed so this first click does not count)
+      var splash = document.getElementById("splash-screen");
+      if (splash) setTimeout(function () { splash.addEventListener("click", growthClick); }, 900);
+
+      // The app initializes after a few seconds regardless: gently finish the tree, then dismiss
+      setTimeout(function () {
+        (function step() {
+          if (cladoCurGen < CLADO_MAXGEN) { cladoWantGen = cladoCurGen + 1; growTo(cladoWantGen); setTimeout(step, 280); }
+          else setTimeout(hideSplash, 900);
+        })();
+      }, 3000);
     }
 
     // Create glowing trail particles

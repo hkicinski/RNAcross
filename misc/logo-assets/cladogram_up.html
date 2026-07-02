@@ -1,0 +1,161 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:#000814;height:100%}#stage{display:block;height:100vh;margin:auto}</style></head><body><svg id="stage" viewBox="0 0 640 760" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">  <defs>
+    <!-- Mesh gradient simulation -->
+    <radialGradient id="meshGrad1" cx="30%" cy="30%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#0077FF;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#FF006E;stop-opacity:0.4" />
+    </radialGradient>
+    
+    <radialGradient id="meshGrad2" cx="70%" cy="70%">
+      <stop offset="0%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8338EC;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#00F5FF;stop-opacity:0.4" />
+    </radialGradient>
+    
+    <!-- Individual cell gradients -->
+    <linearGradient id="neonBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0077FF;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="neonPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8338EC;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6D28D9;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="neonPink" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#DC004E;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="neonOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFBE0B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#F59E0B;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Dynamic RNA flow gradients -->
+    <linearGradient id="rnaFlow1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#00D4FF;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#14B8A6;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#EC4899;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#FF006E;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#FF006E;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="rnaFlow2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#E11D48;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#C026D3;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#9333EA;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#7C3AED;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#8338EC;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="rnaFlow3" x1="100%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#8338EC;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#7C3AED;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#DC2626;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#EA580C;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#F97316;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#FFBE0B;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="rnaFlow4" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFBE0B;stop-opacity:1" />
+      <stop offset="20%" style="stop-color:#FCD34D;stop-opacity:0.9" />
+      <stop offset="40%" style="stop-color:#34D399;stop-opacity:0.8" />
+      <stop offset="60%" style="stop-color:#0EA5E9;stop-opacity:0.8" />
+      <stop offset="80%" style="stop-color:#0284C7;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#00F5FF;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Blur effects -->
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="1"/>
+    </filter>
+    
+    <filter id="rnaGlow">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    
+    <!-- Full gradient for text -->
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00F5FF;stop-opacity:1" />
+      <stop offset="25%" style="stop-color:#0077FF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8338EC;stop-opacity:1" />
+      <stop offset="75%" style="stop-color:#FF006E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFBE0B;stop-opacity:1" />
+    </linearGradient>
+    <filter id="rnaSoft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.0"/></filter>
+  </defs><style>
+  @keyframes draw{to{stroke-dashoffset:0}} @keyframes pop{0%{opacity:0;transform:scale(.2)}70%{opacity:1;transform:scale(1.15)}100%{opacity:1;transform:scale(1)}}
+  @keyframes bloom{from{opacity:0;transform:scale(.2)}to{opacity:1;transform:scale(1)}}
+  .br{stroke-dasharray:100;stroke-dashoffset:100}.genwrap.show .br{animation:draw .5s ease-out forwards}
+  .genwrap .leaf{opacity:0;transform-box:fill-box;transform-origin:center}.genwrap.show .leaf{animation:pop .5s ease .3s forwards}
+  .gem{opacity:0;transform-box:fill-box;transform-origin:center;animation:bloom .4s ease forwards}
+  #hint{font:600 16px system-ui;fill:#bfe9ff;opacity:0;animation:bloom .6s ease .4s forwards}
+  body.done #stage{transition:opacity .8s,transform .8s;opacity:0;transform:scale(1.08)}</style><rect x="-10" y="-10" width="660" height="780" fill="#000814"/><g id="gen1" class="genwrap ">
+   <path d="M320.0,660.0 L170.7,510.0" pathLength="100" class="br" stroke="#79d8ff" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M320.0,660.0 L170.7,510.0" pathLength="100" class="br" stroke="#e6f7ff" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M320.0,660.0 L469.3,510.0" pathLength="100" class="br" stroke="#79d8ff" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M320.0,660.0 L469.3,510.0" pathLength="100" class="br" stroke="#e6f7ff" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/></g>
+<g id="gen2" class="genwrap ">
+   <path d="M170.7,510.0 L96.0,360.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M170.7,510.0 L96.0,360.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M170.7,510.0 L245.3,360.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M170.7,510.0 L245.3,360.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M469.3,510.0 L394.7,360.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M469.3,510.0 L394.7,360.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M469.3,510.0 L544.0,360.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M469.3,510.0 L544.0,360.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/></g>
+<g id="gen3" class="genwrap ">
+   <path d="M96.0,360.0 L58.7,210.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M96.0,360.0 L58.7,210.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M96.0,360.0 L133.3,210.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M96.0,360.0 L133.3,210.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M245.3,360.0 L208.0,210.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M245.3,360.0 L208.0,210.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M245.3,360.0 L282.7,210.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M245.3,360.0 L282.7,210.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M394.7,360.0 L357.3,210.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M394.7,360.0 L357.3,210.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M394.7,360.0 L432.0,210.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M394.7,360.0 L432.0,210.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M544.0,360.0 L506.7,210.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M544.0,360.0 L506.7,210.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M544.0,360.0 L581.3,210.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M544.0,360.0 L581.3,210.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/></g>
+<g id="gen4" class="genwrap ">
+   <path d="M58.7,210.0 L40.0,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M58.7,210.0 L40.0,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M58.7,210.0 L77.3,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M58.7,210.0 L77.3,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M133.3,210.0 L114.7,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M133.3,210.0 L114.7,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M133.3,210.0 L152.0,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M133.3,210.0 L152.0,60.0" pathLength="100" class="br" stroke="#00F5FF" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M208.0,210.0 L189.3,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M208.0,210.0 L189.3,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M208.0,210.0 L226.7,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M208.0,210.0 L226.7,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M282.7,210.0 L264.0,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M282.7,210.0 L264.0,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M282.7,210.0 L301.3,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M282.7,210.0 L301.3,60.0" pathLength="100" class="br" stroke="#FF006E" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M357.3,210.0 L338.7,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M357.3,210.0 L338.7,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M357.3,210.0 L376.0,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M357.3,210.0 L376.0,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M432.0,210.0 L413.3,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M432.0,210.0 L413.3,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M432.0,210.0 L450.7,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M432.0,210.0 L450.7,60.0" pathLength="100" class="br" stroke="#8338EC" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M506.7,210.0 L488.0,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M506.7,210.0 L488.0,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M506.7,210.0 L525.3,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M506.7,210.0 L525.3,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M581.3,210.0 L562.7,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M581.3,210.0 L562.7,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/>
+   <path d="M581.3,210.0 L600.0,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="3.0" fill="none" opacity="0.25" filter="url(#rnaSoft)" stroke-linecap="round"/>
+   <path d="M581.3,210.0 L600.0,60.0" pathLength="100" class="br" stroke="#FFBE0B" stroke-width="1.7" fill="none" opacity="0.95" stroke-linecap="round"/><circle class="leaf" cx="40.0" cy="60.0" r="2.4" fill="#00F5FF" opacity="0.85"/><g class="leaf"><g transform="translate(77.3,60.0)"><ellipse rx="8" ry="9" fill="#000814" stroke="url(#neonBlue)" stroke-width="2.2"/><circle r="4" fill="#00F5FF" opacity="0.5" filter="url(#rnaSoft)"/><circle r="2.2" fill="#00F5FF" opacity="0.9"/></g></g><circle class="leaf" cx="114.7" cy="60.0" r="2.4" fill="#00F5FF" opacity="0.85"/><circle class="leaf" cx="152.0" cy="60.0" r="2.4" fill="#00F5FF" opacity="0.85"/><circle class="leaf" cx="189.3" cy="60.0" r="2.4" fill="#FF006E" opacity="0.85"/><g class="leaf"><g transform="translate(226.7,60.0)"><ellipse rx="8" ry="9" fill="#000814" stroke="url(#neonPink)" stroke-width="2.2"/><circle r="4" fill="#FF006E" opacity="0.5" filter="url(#rnaSoft)"/><circle r="2.2" fill="#FF006E" opacity="0.9"/></g></g><circle class="leaf" cx="264.0" cy="60.0" r="2.4" fill="#FF006E" opacity="0.85"/><circle class="leaf" cx="301.3" cy="60.0" r="2.4" fill="#FF006E" opacity="0.85"/><circle class="leaf" cx="338.7" cy="60.0" r="2.4" fill="#8338EC" opacity="0.85"/><g class="leaf"><g transform="translate(376.0,60.0)"><ellipse rx="8" ry="9" fill="#000814" stroke="url(#neonPurple)" stroke-width="2.2"/><circle r="4" fill="#8338EC" opacity="0.5" filter="url(#rnaSoft)"/><circle r="2.2" fill="#8338EC" opacity="0.9"/></g></g><circle class="leaf" cx="413.3" cy="60.0" r="2.4" fill="#8338EC" opacity="0.85"/><circle class="leaf" cx="450.7" cy="60.0" r="2.4" fill="#8338EC" opacity="0.85"/><circle class="leaf" cx="488.0" cy="60.0" r="2.4" fill="#FFBE0B" opacity="0.85"/><g class="leaf"><g transform="translate(525.3,60.0)"><ellipse rx="8" ry="9" fill="#000814" stroke="url(#neonOrange)" stroke-width="2.2"/><circle r="4" fill="#FFBE0B" opacity="0.5" filter="url(#rnaSoft)"/><circle r="2.2" fill="#FFBE0B" opacity="0.9"/></g></g><circle class="leaf" cx="562.7" cy="60.0" r="2.4" fill="#FFBE0B" opacity="0.85"/><circle class="leaf" cx="600.0" cy="60.0" r="2.4" fill="#FFBE0B" opacity="0.85"/></g><g class="gem"><polygon points="320,650 330,660 320,670 310,660" fill="#00141c" stroke="url(#neonGrad)" stroke-width="3"/><circle cx="320" cy="660" r="3" fill="#fff"/></g><text id="hint" x="320" y="724" text-anchor="middle">click to grow ↑</text></svg><script>let g=0;const M=4;function grow(){if(g<M){g++;document.getElementById("gen"+g).classList.add("show");}}document.body.addEventListener("click",grow);setTimeout(function(){var t=setInterval(function(){if(g<M)grow();else{clearInterval(t);setTimeout(function(){document.body.classList.add("done")},600);}},180);},4000);</script></body></html>

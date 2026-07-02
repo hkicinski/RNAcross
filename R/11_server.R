@@ -340,9 +340,9 @@ server <- function(input, output, session) {
     }
     
     if (!is.null(plot_settings$contrast_mode_enabled) && plot_settings$contrast_mode_enabled) {
-      base_config$sc$name <- "S. cerevisiae (Contrast Mode)"
+      base_config$sc$name <- "Saccharomyces cerevisiae (Contrast Mode)"
     } else {
-      base_config$sc$name <- "S. cerevisiae"
+      base_config$sc$name <- "Saccharomyces cerevisiae"
     }
     
     base_config
@@ -1286,7 +1286,7 @@ server <- function(input, output, session) {
             "Currently using TMM-normalized log2CPM data"
           }
         ),
-        h5(icon("dna"), " S. cerevisiae Dataset", style = "margin-top: 15px;"),
+        h5(icon("dna"), " ", tags$em("Saccharomyces cerevisiae"), " Dataset", style = "margin-top: 15px;"),
         materialSwitch(
           inputId = "settings_contrast_mode_enabled",
           label = "Enable Contrast Mode (Overlay Datasets)",
@@ -1515,7 +1515,7 @@ server <- function(input, output, session) {
                 selectInput("settings_row_ordering", "Row Ordering:",
                   choices = c(
                     "By functional category" = "functional",
-                    "By S. cerevisiae peak" = "peak_time",
+                    "By Saccharomyces cerevisiae peak" = "peak_time",
                     "Alphabetical" = "alphabetical"
                   ),
                   selected = isolate(plot_settings$row_ordering %||% "functional")
