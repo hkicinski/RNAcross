@@ -1,4 +1,22 @@
 app_version_history <- list(
+  "3.1.3" = list(
+    version      = "3.1.3",
+    release_date = "2026-07-03",
+    title        = "Y-Axis Range Control & Fixes",
+    message      = c(
+      "Adds a fixed Y-axis range control for the line plots (settable by clicking directly on the axis or through a new global Plot Settings option) and fixes crashes in the Gene Group Analysis and its publication export."
+    ),
+    features   = c(
+      "Fixed Y-Axis Range: Lock the Y-axis (expression) range on the line plots for a consistent scale. Click directly on a Gene Group plot's Y-axis to adjust it in the Interactive Aesthetic Editor, or enter an exact Y min/max in the new Line Plots section of Plot Settings that applies across the Gene Group, Single Species, and Comparative line plots and their exports."
+    ),
+    bug_fixes  = c(
+      "Gene Group Analysis Crash: Fixed an 'object sc_anno not found' error that broke the Gene Group Analysis (and other modules) when a gene fell back to the synteny-aided search, most often seen with S. cerevisiae gene sets.",
+      "Gene Group Publication Export: The publication-mode heatmap export no longer errors and now matches the on-screen plot."
+    ),
+    show_changelog = TRUE,
+    changelog_url  = "https://github.com/hkicinski/RNAcross/blob/main/CHANGELOG.md",
+    show_tutorial  = FALSE
+  ),
   "3.1.2" = list(
     version      = "3.1.2",
     release_date = "2026-06-09",
@@ -81,7 +99,7 @@ app_version_info <- app_version_history[[1]]   # newest entry
 
 build_version_entry <- function(info) {
   content <- tagList(
-    tags$h5(sprintf("v%s — %s", info$version,
+    tags$h5(sprintf("v%s - %s", info$version,
                     format(as.Date(info$release_date), "%B %d, %Y"))),
     lapply(info$message, p)
   )

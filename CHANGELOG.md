@@ -2,7 +2,29 @@
 
 All notable changes to RNAcross are documented in this file.
 
-## [3.1.2] — 2026-06-09
+## [3.1.3] - 2026-07-03
+
+### Added
+
+- **Fixed Y-Axis Range Control**
+  - You can now lock the Y-axis (expression) range on the line plots so figures stay on a consistent scale for comparison.
+  - **Point-and-click:** clicking directly on the Y-axis of a Gene Group line plot opens the Interactive Aesthetic Editor with a Y-Axis Range slider, seeded to the plot's current range and updating it live.
+  - **Global defined setting:** a new "Fixed Y-axis Range" section in the Plot Settings modal (Line Plots tab) accepts an exact Y min / Y max that applies across the Gene Group, Single Species, and Comparative line plots, both on screen and in their exports, for users who want a consistent axis across all of their plots.
+
+### Fixed
+
+- **Gene Group Analysis: "object 'sc_anno' not found"**
+  - Fixed an error (reported by lab members) that crashed the Gene Group Analysis when a queried gene fell back to the synteny-aided search, most visible when analyzing S. cerevisiae gene sets. A leftover lookup call was removed and a species-code reference in the synteny grouping was corrected, resolving the same latent crash across every module that uses the gene query.
+
+- **Gene Group Publication Plot Export**
+  - The publication-mode export of the Gene Group heatmap no longer errors. The export path now mirrors the on-screen renderer: the color scale, timepoint handling, and gene-category annotations are all defined before drawing, and the panels are no longer built twice.
+
+### Changed
+
+- **Automatic Dependency Installation**
+  - On a fresh machine, the app now checks for and installs any missing packages on startup, including the Bioconductor-only ones (ComplexHeatmap, ggtree, treeio), so the app launches without first hunting down "there is no package called ..." errors.
+
+## [3.1.2] - 2026-06-09
 
 ### Added
   - Integrated the new 2026 S. cerevisiae sequencing datasets (WT and Δppx1 Δppn1).
@@ -12,7 +34,7 @@ All notable changes to RNAcross are documented in this file.
   - Plugged the new data to the main `get_species_data()` function that underlies data retrieval; selects what users toggle upon request
   - Redesigned the intro splash: clicking the yeast cells now grows a phylogenetic cladogram upward from the click point, one branch generation per click, replacing the previous RNA-helix reveal. Added a new click sound effect.
 
-## [3.1.1] — 2026-05-29
+## [3.1.1] - 2026-05-29
 
 ### Added
 
@@ -30,13 +52,13 @@ All notable changes to RNAcross are documented in this file.
   - The legend X position, Y position, orientation, and background controls now actually update the plot (the server-side handlers were missing).
 
 - **Aesthetic Editor: Edits Reverting to Default**
-  - Editor changes no longer reset when clicking elsewhere on the plot or when reopening the editor. Plot re-renders are decoupled from editor selection state, manual interactions are preserved across redraws (`uirevision`), and each control is now seeded from the element's current live values so reopening reflects—and re-applies—the existing styling instead of defaults!!!!
+  - Editor changes no longer reset when clicking elsewhere on the plot or when reopening the editor. Plot re-renders are decoupled from editor selection state, manual interactions are preserved across redraws (`uirevision`), and each control is now seeded from the element's current live values so reopening reflects and re-applies the existing styling instead of defaults!!!!
 
 - **Aesthetic Editor: Bold Not Working**
   - Legend bold now applies reliably. Bolding uses HTML markup (legend title text and trace names) which Plotly.js reliably honors.
 ---
 
-## [3.1.0] — 2026-05-26
+## [3.1.0] - 2026-05-26
 
 ### Added
 
@@ -80,15 +102,15 @@ All notable changes to RNAcross are documented in this file.
 
 ---
 
-## [3.0.0] — 2026-04-12
+## [3.0.0] - 2026-04-12
 
 ### Added
 
 - **"What's New" Version Modal**
   - A pop-up now appears after the splash screen to inform users of new features, bug fixes, and changes.
-  - Only shows once per version — returning users won't see it again unless a new version is released.
+  - Only shows once per version; returning users won't see it again unless a new version is released.
   - A bullhorn icon (📢) in the navbar lets users reopen it at any time.
-  - Content is fully driven by a single config file (`R/00_version_init.R`) — no hardcoded text elsewhere.
+  - Content is fully driven by a single config file (`R/00_version_init.R`), with no hardcoded text elsewhere.
 
 - **Universal Plot Export System**
   - Every plot in the app now has a **Download Plot** button that opens an export modal.
@@ -99,7 +121,7 @@ All notable changes to RNAcross are documented in this file.
 
 - **How downloads work under the hood**
   - Plots rendered with **ggplot2** (PCA, Ridgeline, Gene Group publication heatmaps) are generated server-side and delivered as a direct file download.
-  - Plots rendered with **Plotly** (single-species expression, combined expression, ortholog heatmap, gene group interactive) are exported client-side using Plotly's built-in image export — no dependency on external tools like Orca or Kaleido.
+  - Plots rendered with **Plotly** (single-species expression, combined expression, ortholog heatmap, gene group interactive) are exported client-side using Plotly's built-in image export.
   - PDF and SVG are available for ggplot-based plots. Plotly-based plots support PNG, JPEG, and SVG.
 
 - **Download buttons** across all tabs were standardized to use the same modal workflow.
