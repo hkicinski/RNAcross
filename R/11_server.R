@@ -362,6 +362,9 @@ server <- function(input, output, session) {
     # global line aesthetics
     line_thickness = 1,
     line_type = "solid",
+    y_axis_manual = FALSE,
+    y_axis_min = 0,
+    y_axis_max = 15,
 
     # multi-gene line/point encoding
     encoding_multigene_color = "species",
@@ -1362,7 +1365,18 @@ server <- function(input, output, session) {
             h5("Global Line Aesthetics"),
             p(class = "text-muted", "These settings apply across modules where line type/thickness isn't actively used for encoding."),
             sliderInput("settings_line_thickness", "Line Thickness:", min = 0.5, max = 3.0, value = isolate(plot_settings$line_thickness %||% 1), step = 0.1),
-            selectInput("settings_line_type", "Line Type:", choices = c("Solid" = "solid", "Dashed" = "dashed", "Dotted" = "dotted", "Dot-Dash" = "dotdash", "Long Dash" = "longdash", "Two Dash" = "twodash"), selected = isolate(plot_settings$line_type %||% "solid"))
+            selectInput("settings_line_type", "Line Type:", choices = c("Solid" = "solid", "Dashed" = "dashed", "Dotted" = "dotted", "Dot-Dash" = "dotdash", "Long Dash" = "longdash", "Two Dash" = "twodash"), selected = isolate(plot_settings$line_type %||% "solid")),
+            hr(),
+            h5("Fixed Y-axis Range"),
+            p(class = "text-muted", "Apply a consistent Y-axis (expression) range across the Gene Group, Single Species, and Comparative line plots — on screen and in exports."),
+            checkboxInput("settings_y_axis_manual", "Use fixed Y-axis range", value = isolate(isTRUE(plot_settings$y_axis_manual))),
+            conditionalPanel(
+              condition = "input.settings_y_axis_manual == true",
+              fluidRow(
+                column(6, numericInput("settings_y_axis_min", "Y min:", value = isolate(plot_settings$y_axis_min %||% 0))),
+                column(6, numericInput("settings_y_axis_max", "Y max:", value = isolate(plot_settings$y_axis_max %||% 15)))
+              )
+            )
           )
         ),
 
@@ -2164,6 +2178,18 @@ server <- function(input, output, session) {
 
   observeEvent(input$settings_line_type, {
     plot_settings$line_type <- input$settings_line_type
+  })
+
+  observeEvent(input$settings_y_axis_manual, {
+    plot_settings$y_axis_manual <- isTRUE(input$settings_y_axis_manual)
+  })
+
+  observeEvent(input$settings_y_axis_min, {
+    plot_settings$y_axis_min <- input$settings_y_axis_min
+  })
+
+  observeEvent(input$settings_y_axis_max, {
+    plot_settings$y_axis_max <- input$settings_y_axis_max
   })
 
   # Publication Settings Observers
@@ -3047,7 +3073,7 @@ server <- function(input, output, session) {
             config <- current_species_config()
             current_settings <- reactiveValuesToList(plot_settings)
 
-            create_gene_plot(
+            p <- create_gene_plot(
               lc = get_expression_matrix(sp_id, plot_settings$global_transform, species_data),
               gene = sp_state$gene,
               sample_info = species_data$sample_info,
@@ -3057,6 +3083,7 @@ server <- function(input, output, session) {
               transform_type = plot_settings$global_transform,
               plot_settings = current_settings
             )
+            apply_y_axis_range(p, plot_settings, base_rev = paste0(sp_id, "_gene_plot"))
           })
 
           output[[paste0(sp_id, "_gene_info")]] <- renderText({
@@ -3457,6 +3484,7 @@ server <- function(input, output, session) {
         xaxis = list(tickfont = list(size = 11)),
         yaxis = list(tickfont = list(size = 11))
       ) %>%
+      apply_y_axis_range(plot_settings, base_rev = "combined_gene_plot") %>%
       config(displayModeBar = TRUE, modeBarButtons = list(list("zoom2d", "pan2d", "resetScale2d", "toImage")))
   })
 
@@ -4764,7 +4792,7 @@ server <- function(input, output, session) {
                 paper_bgcolor = if (is_dark()) "#2c3034" else "white",
                 font = list(color = if (is_dark()) "white" else "black")
               )
-            return(p)
+            return(apply_y_axis_range(p, plot_settings, base_rev = "gene_group_plot"))
           }
 
           # Prepare aesthetics for ggplot
@@ -4857,6 +4885,7 @@ server <- function(input, output, session) {
               paper_bgcolor = if (is_dark()) "#2c3034" else "white",
               font = list(color = if (is_dark()) "white" else "black")
             ) %>%
+            apply_y_axis_range(plot_settings, base_rev = "gene_group_plot") %>%
             htmlwidgets::onRender(paste0("
               function(el, x) {
                 if (window.initInteractiveEditor) {
@@ -4977,7 +5006,7 @@ server <- function(input, output, session) {
         }
       } else {
         # Single Species Logic
-        create_group_visualization(
+        gv <- create_group_visualization(
           plot_data = plot_data,
           viz_type = params$viz_type,
           is_dark_mode = is_dark(),
@@ -4989,6 +5018,8 @@ server <- function(input, output, session) {
           selected_comparisons = params$selected_comparisons,
           plot_settings = reactiveValuesToList(plot_settings)
         )
+        if (isTRUE(params$viz_type == "line")) gv <- apply_y_axis_range(gv, plot_settings, base_rev = "gene_group_plot")
+        gv
       }
     }
   })
@@ -5251,34 +5282,28 @@ server <- function(input, output, session) {
       species_order <- c("sc", "cg", "ca", "kl")
       all_genes <- unique(plot_data$Gene)
 
-      pal <- NULL
-
-      for (sp in species_order) {
-        mat <- prepare_heatmap_matrix_publication(
-          expression_data = plot_data,
-          species_code = sp,
-          gene_order = all_genes,
-          transform_type = transform,
-          time_axis_type = time_axis,
-          allowed_timepoints = allowed_timepoints,
-          show_t0 = show_t0
-        )
-
-        ht <- make_publication_heatmap(
-          mat = mat,
-          species_prefix = paste0(config[[sp]]$short, "-"),
-          species_name = config[[sp]]$name,
-          color_fun = color_fun,
-          row_annot = if (sp == species_order[4]) row_annot else NULL,
-          show_legend = FALSE,
-          show_row_names = show_rows,
-          category_colors = pal,
-          use_raster = use_raster
-        )
-        ht_list[[length(ht_list) + 1]] <- ht
+      min_scale <- plot_settings$color_min
+      max_scale <- plot_settings$color_max
+      color_fun <- if (!is.null(min_scale) && !is.null(max_scale)) {
+        circlize::colorRamp2(c(min_scale, 0, max_scale), c("blue", "white", "red"))
+      } else {
+        circlize::colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
       }
 
-      # Process Annotations
+      allowed_timepoints <- NULL
+      if (time_axis == "intersection") {
+        tp_list <- list()
+        for (sp in species_order) {
+          sp_data <- if ("SpeciesCode" %in% names(plot_data)) {
+            plot_data[plot_data$SpeciesCode == sp, ]
+          } else {
+            plot_data[plot_data$Species == sp, ]
+          }
+          if (nrow(sp_data) > 0) tp_list[[sp]] <- unique(sp_data$Timepoint)
+        }
+        if (length(tp_list) > 0) allowed_timepoints <- Reduce(intersect, tp_list)
+      }
+
       row_annot <- NULL
       pal <- NULL
       if (!is.null(gene_group_state$annotations)) {
@@ -5321,6 +5346,7 @@ server <- function(input, output, session) {
           gene_order = all_genes,
           transform_type = transform,
           time_axis_type = time_axis,
+          allowed_timepoints = allowed_timepoints,
           show_t0 = show_t0
         )
 
@@ -5329,12 +5355,25 @@ server <- function(input, output, session) {
           species_prefix = paste0(config[[sp]]$short, "-"),
           species_name = config[[sp]]$name,
           color_fun = color_fun,
-          row_annot = if (sp == species_order[4]) row_annot else NULL
+          row_annot = if (sp == tail(species_order, 1)) row_annot else NULL,
+          show_legend = FALSE,
+          show_row_names = show_rows,
+          category_colors = pal,
+          use_raster = use_raster
         )
         ht_list[[length(ht_list) + 1]] <- ht
       }
 
-      draw_2x2_heatmap(ht_list, legend = NULL)
+      min_val <- if (!is.null(min_scale)) min_scale else -2
+      max_val <- if (!is.null(max_scale)) max_scale else 2
+      legend <- make_shared_legend(
+        color_fun = color_fun,
+        category_colors = pal,
+        min_val = min_val,
+        max_val = max_val
+      )
+
+      draw_2x2_heatmap(ht_list, legend = legend)
       dev.off()
 
       # Send file via base64

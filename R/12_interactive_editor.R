@@ -105,6 +105,20 @@ setup_interactive_editor <- function(input, output, session) {
           textInput("editor_axis_text", "Title Text", value = rv_plot_aesthetics$current_trace_name)
         )
       }
+      if (grepl("yaxis", el)) {
+        yr <- suppressWarnings(as.numeric(unlist(cv$yaxis_range)))
+        if (length(yr) < 2 || any(!is.finite(yr))) yr <- c(0, 15)
+        lo <- yr[[1]]; hi <- yr[[2]]
+        span <- max(1, hi - lo)
+        controls_ui <- tagList(
+          controls_ui,
+          tags$hr(),
+          tags$strong("Y-Axis Range"),
+          sliderInput("editor_yaxis_range", NULL,
+                      min = floor(lo - span), max = ceiling(hi + span),
+                      value = c(lo, hi), step = max(0.1, round(span / 40, 1)))
+        )
+      }
     } else if (el == "legend") {
       fams <- c("Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Helvetica", "Open Sans")
       controls_ui <- tagList(
@@ -196,6 +210,20 @@ setup_interactive_editor <- function(input, output, session) {
     ))
   }, ignoreInit = TRUE)
   
+  observeEvent(input$editor_yaxis_range, {
+    req(rv_plot_aesthetics$current_plot_id)
+    rng <- suppressWarnings(as.numeric(input$editor_yaxis_range))
+    if (length(rng) < 2 || any(!is.finite(rng))) return()
+    ax <- rv_plot_aesthetics$current_axis_id
+    ax_full <- if (is.null(ax) || !nzchar(ax)) "yaxis" else if (startsWith(ax, "yaxis")) ax else sub("^y", "yaxis", ax)
+    update <- list()
+    update[[paste0(ax_full, ".range")]] <- c(rng[[1]], rng[[2]])
+    session$sendCustomMessage("editor_relayout", list(
+      plot_id = rv_plot_aesthetics$current_plot_id,
+      update = update
+    ))
+  }, ignoreInit = TRUE)
+
   # Axis Color
   observeEvent(input$editor_axis_color, {
     req(rv_plot_aesthetics$current_plot_id, rv_plot_aesthetics$current_axis_id)

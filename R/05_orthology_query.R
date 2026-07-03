@@ -135,14 +135,13 @@ build_synteny_group <- function(gene_id, species_code, all_species_data) {
   if (is.null(syn)) return(NULL)
 
   sc_gene <- NULL
-  lookup_df <- get(paste0(species_code, "_anno"))
 
   if (species_code == "sc") {
     sc_gene <- gene_id
   } else {
     table_name <- paste0(species_code, "ToSc")
     if (!is.null(syn[[table_name]])) {
-      id_col <- paste0(base_code, "id")
+      id_col <- paste0(species_code, "id")
       syn_match <- syn[[table_name]][syn[[table_name]][[id_col]] == gene_id, ]
       if (nrow(syn_match) > 0) {
         sc_gene <- as.character(syn_match$scid[1])

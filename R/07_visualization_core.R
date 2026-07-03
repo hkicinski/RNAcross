@@ -553,7 +553,8 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
         paper_bgcolor = plot_bg_color,
         font = list(color = text_color),
         hoverlabel = list(bgcolor = if (is_dark_mode) "#444" else "white"),
-        showlegend = TRUE
+        showlegend = TRUE,
+        uirevision = "gene_group_plot"
       ) %>%
       htmlwidgets::onRender("
         function(el, x) {

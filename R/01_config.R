@@ -52,6 +52,30 @@ clear_performance_cache <- function() {
 }
 
 # library loading
+.cran_pkgs <- c(
+  "tidyverse", "data.table", "cowplot", "tidyr",
+  "shiny", "bslib", "waiter", "shinyjs", "plotly", "DT",
+  "fontawesome", "shinyBS", "shinyWidgets",
+  "viridis", "ggridges", "ape", "RColorBrewer", "colourpicker",
+  "ggprism", "ggrepel", "circlize", "svglite", "here"
+)
+.bioc_pkgs <- c("ComplexHeatmap", "ggtree", "treeio")
+
+.missing_cran <- .cran_pkgs[!vapply(.cran_pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(.missing_cran) > 0) {
+  message("Installing missing CRAN packages: ", paste(.missing_cran, collapse = ", "))
+  install.packages(.missing_cran, repos = "https://cloud.r-project.org")
+}
+
+.missing_bioc <- .bioc_pkgs[!vapply(.bioc_pkgs, requireNamespace, logical(1), quietly = TRUE)]
+if (length(.missing_bioc) > 0) {
+  if (!requireNamespace("BiocManager", quietly = TRUE)) {
+    install.packages("BiocManager", repos = "https://cloud.r-project.org")
+  }
+  message("Installing missing Bioconductor packages: ", paste(.missing_bioc, collapse = ", "))
+  BiocManager::install(.missing_bioc, update = FALSE, ask = FALSE)
+}
+
 suppressMessages({
   # core data manipulation
   library(tidyverse)

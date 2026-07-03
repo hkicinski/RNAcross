@@ -17,6 +17,16 @@ hiddenInput <- function(inputId, value) {
   )
 }
 
+apply_y_axis_range <- function(p, ps, base_rev = NULL) {
+  if (is.null(ps) || !isTRUE(ps$y_axis_manual)) return(p)
+  ymin <- suppressWarnings(as.numeric(ps$y_axis_min))
+  ymax <- suppressWarnings(as.numeric(ps$y_axis_max))
+  if (length(ymin) == 0 || length(ymax) == 0 || is.na(ymin) || is.na(ymax) || ymin >= ymax) return(p)
+  p <- plotly::layout(p, yaxis = list(range = c(ymin, ymax), autorange = FALSE))
+  if (!is.null(base_rev)) p <- plotly::layout(p, uirevision = paste0(base_rev, "_y_", ymin, "_", ymax))
+  p
+}
+
 #' Create species panel content
 #'
 #' Creates the content for a species-specific analysis panel including

@@ -252,6 +252,11 @@
                         bg_plot:  FL.plot_bgcolor  || L.plot_bgcolor,
                         bg_paper: FL.paper_bgcolor || L.paper_bgcolor
                     };
+                } else if (elementType.indexOf('yaxis') === 0) {
+                    let axKey = 'yaxis';
+                    if (axisId && /^y\d+$/.test(axisId)) axKey = axisId.replace(/^y/, 'yaxis');
+                    const yaObj = (FL[axKey] || L[axKey] || {});
+                    if (yaObj.range) current = { yaxis_range: yaObj.range.slice() };
                 }
             } catch (e) { current = {}; }
 
