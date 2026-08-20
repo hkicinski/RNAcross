@@ -10,6 +10,11 @@ data/cache/
 *.log
 temp/
 
+# JS build (wizard component) - source is tracked, deps + logs are not
+jsbuild/node_modules/
+jsbuild/package-lock.json
+npm-debug.log*
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -19,3 +24,9 @@ Thumbs.db
 deploy.R
 
 
+
+# large downloaded source data for the 2026 test set
+test_data_2026/raw/
+adverserial-data
+
+poster_assets

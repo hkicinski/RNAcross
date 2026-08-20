@@ -93,6 +93,18 @@
                     if (textNode) {
                         elementType = 'trace';
                         traceName = textNode.textContent || "";
+                        //resolve which trace this legend entry is; prefix fallback for truncated names
+                        const clean = function(s) {
+                            return (s || "").replace(/^<b>([\s\S]*)<\/b>$/, "$1").replace(/…|\.\.\.$/, "").trim();
+                        };
+                        const want = clean(traceName);
+                        if (gd.data && want) {
+                            for (let i = 0; i < gd.data.length; i++) {
+                                const nm = clean(gd.data[i].name);
+                                if (nm === want || (want.length > 2 && nm.indexOf(want) === 0)) { traceIndex = i; break; }
+                            }
+                            if (traceIndex >= 0) traceName = clean(gd.data[traceIndex].name);
+                        }
                     }
                 } else {
                     elementType = 'legend';
@@ -211,6 +223,18 @@
             try {
                 const FL = gd._fullLayout || {};
                 const L  = gd.layout || {};
+                //plotly returns rgb()/rgba(); colourInput needs hex
+                const toHex = function(c) {
+                    if (!c || typeof c !== 'string') return c;
+                    const m = c.match(/^rgba?\(([^)]+)\)$/);
+                    if (!m) return c;
+                    const p = m[1].split(',').map(parseFloat);
+                    if (p.length < 3) return c;
+                    if (p.length >= 4 && p[3] === 0) return 'transparent';
+                    const h = function(v) { return ('0' + Math.round(v).toString(16)).slice(-2); };
+                    return '#' + h(p[0]) + h(p[1]) + h(p[2]);
+                };
+                const unbold = function(t) { return (t || "").replace(/^<b>([\s\S]*)<\/b>$/, "$1"); };
                 if (elementType === 'legend') {
                     const lg   = FL.legend || L.legend || {};
                     const lgf  = lg.font || {};
@@ -221,20 +245,23 @@
                     current = {
                         legend_x: lg.x, legend_y: lg.y,
                         legend_orientation: lg.orientation || 'v',
-                        legend_bgcolor: lg.bgcolor,
+                        legend_bgcolor: toHex(lg.bgcolor),
+                        legend_title_text: unbold(lgt.text),
                         legend_item_fontfamily: lgf.family,
                         legend_item_fontsize: lgf.size,
-                        legend_item_fontcolor: lgf.color,
+                        legend_item_fontcolor: toHex(lgf.color),
                         legend_item_bold: boldRe.test(firstName),
                         legend_title_fontfamily: lgtf.family,
                         legend_title_fontsize: lgtf.size,
-                        legend_title_fontcolor: lgtf.color,
+                        legend_title_fontcolor: toHex(lgtf.color),
                         legend_title_bold: boldRe.test(lgt.text || "")
                     };
                 } else if (elementType === 'trace' && traceIndex >= 0 && gd.data && gd.data[traceIndex]) {
                     const tr = gd.data[traceIndex];
+                    let tcol = (tr.line && tr.line.color) || (tr.marker && tr.marker.color);
+                    if (Array.isArray(tcol)) tcol = tcol[0];
                     current = {
-                        trace_color: (tr.line && tr.line.color) || (tr.marker && tr.marker.color),
+                        trace_color: toHex(tcol),
                         trace_width: tr.line && tr.line.width,
                         trace_dash: (tr.line && tr.line.dash) || 'solid',
                         trace_markersize: tr.marker && tr.marker.size,
@@ -242,22 +269,56 @@
                     };
                 } else if (elementType === 'title' || elementType === 'text_element') {
                     const t = L.title || FL.title || {};
+                    const tf = (typeof t === 'string') ? {} : (t.font || {});
                     current = {
-                        title_text: (typeof t === 'string') ? t : (t.text),
-                        title_size: t.font && t.font.size,
-                        title_color: t.font && t.font.color
+                        title_text: unbold((typeof t === 'string') ? t : t.text),
+                        title_bold: /^<b>[\s\S]*<\/b>$/.test((typeof t === 'string') ? t : (t.text || "")),
+                        title_family: tf.family,
+                        title_size: tf.size,
+                        title_color: toHex(tf.color)
                     };
                 } else if (elementType === 'background') {
                     current = {
-                        bg_plot:  FL.plot_bgcolor  || L.plot_bgcolor,
-                        bg_paper: FL.paper_bgcolor || L.paper_bgcolor
+                        bg_plot:  toHex(FL.plot_bgcolor  || L.plot_bgcolor),
+                        bg_paper: toHex(FL.paper_bgcolor || L.paper_bgcolor)
                     };
-                } else if (elementType.indexOf('yaxis') === 0) {
-                    let axKey = 'yaxis';
-                    if (axisId && /^y\d+$/.test(axisId)) axKey = axisId.replace(/^y/, 'yaxis');
-                    const yaObj = (FL[axKey] || L[axKey] || {});
-                    if (yaObj.range) current = { yaxis_range: yaObj.range.slice() };
+                } else if (elementType.indexOf('xaxis') === 0 || elementType.indexOf('yaxis') === 0) {
+                    //seed axis controls from live values, so opening the panel is a no-op
+                    let axKey = elementType.charAt(0) + 'axis';
+                    if (axisId) {
+                        axKey = /^(x|y)axis/.test(axisId) ? axisId : axisId.replace(/^([xy])/, '$1axis');
+                    }
+                    const axObj = (FL[axKey] || L[axKey] || {});
+                    const at = (typeof axObj.title === 'string') ? { text: axObj.title } : (axObj.title || {});
+                    const atf = at.font || {};
+                    const atk = axObj.tickfont || {};
+                    current = {
+                        axis_key: axKey,
+                        axis_title_text: unbold(at.text),
+                        axis_title_bold: /^<b>[\s\S]*<\/b>$/.test(at.text || ""),
+                        axis_title_family: atf.family,
+                        axis_title_size: atf.size,
+                        axis_title_color: toHex(atf.color),
+                        axis_tick_family: atk.family,
+                        axis_tick_size: atk.size,
+                        axis_tick_color: toHex(atk.color),
+                        axis_line_width: axObj.linewidth,
+                        axis_line_color: toHex(axObj.linecolor),
+                        axis_grid_width: axObj.gridwidth,
+                        axis_grid_color: toHex(axObj.gridcolor)
+                    };
+                    if (axObj.range) {
+                        current.axis_range = axObj.range.slice();
+                        if (elementType.charAt(0) === 'y') current.yaxis_range = axObj.range.slice();
+                    }
                 }
+                // Capture legend visibility + current right margin regardless of
+                // which element was clicked, so the always-visible Show-legend
+                // toggle can seed itself and later restore the reclaimed space.
+                current.showlegend = (FL.showlegend !== undefined) ? FL.showlegend
+                                      : (L.showlegend !== undefined ? L.showlegend : true);
+                if (FL.margin && FL.margin.r != null) current.margin_r = FL.margin.r;
+                else if (L.margin && L.margin.r != null) current.margin_r = L.margin.r;
             } catch (e) { current = {}; }
 
             // Send to Shiny
@@ -446,6 +507,82 @@
       function closeDragElement() {
           document.onmouseup = null;
           document.onmousemove = null;
+      }
+  };
+
+  //replay the style state recorded in R after a Shiny re-render
+  window.applyEditorStyleState = function(plotEl, st) {
+      if (!plotEl || !st) return;
+      const gd = plotEl.classList && plotEl.classList.contains('js-plotly-plot') ? plotEl :
+                 (plotEl.querySelector('.js-plotly-plot') || plotEl);
+      const bold = function(t, on) { return on ? ('<b>' + t + '</b>') : t; };
+      const up = {};
+
+      Object.keys(st).forEach(function(key) {
+          if (!/^(x|y)axis\d*$/.test(key)) return;
+          const a = st[key] || {};
+          if (a.line_width != null) up[key + '.linewidth'] = a.line_width;
+          if (a.line_color)         up[key + '.linecolor'] = a.line_color;
+          if (a.grid_width != null) up[key + '.gridwidth'] = a.grid_width;
+          if (a.grid_color)         up[key + '.gridcolor'] = a.grid_color;
+          if (a.title != null)      up[key + '.title.text'] = bold(a.title, a.title_bold);
+          if (a.title_family)       up[key + '.title.font.family'] = a.title_family;
+          if (a.title_size != null) up[key + '.title.font.size'] = a.title_size;
+          if (a.title_color)        up[key + '.title.font.color'] = a.title_color;
+          if (a.tick_family)        up[key + '.tickfont.family'] = a.tick_family;
+          if (a.tick_size != null)  up[key + '.tickfont.size'] = a.tick_size;
+          if (a.tick_color)         up[key + '.tickfont.color'] = a.tick_color;
+          if (a.range && a.range.length === 2) up[key + '.range'] = a.range;
+      });
+
+      if (st.title) {
+          if (st.title.text != null) up['title.text'] = bold(st.title.text, st.title.bold);
+          if (st.title.family)       up['title.font.family'] = st.title.family;
+          if (st.title.size != null) up['title.font.size'] = st.title.size;
+          if (st.title.color)        up['title.font.color'] = st.title.color;
+      }
+      if (st.background) {
+          if (st.background.plot)  up['plot_bgcolor']  = st.background.plot;
+          if (st.background.paper) up['paper_bgcolor'] = st.background.paper;
+      }
+      if (st.legend) {
+          const lg = st.legend;
+          if (lg.show != null)         up['showlegend'] = !!lg.show;
+          if (lg.margin_r != null)     up['margin.r'] = lg.margin_r;
+          if (lg.orientation)          up['legend.orientation'] = lg.orientation;
+          if (lg.x != null)            up['legend.x'] = lg.x;
+          if (lg.y != null)            up['legend.y'] = lg.y;
+          if (lg.bgcolor)              up['legend.bgcolor'] = lg.bgcolor;
+          if (lg.title_text != null)   up['legend.title.text'] = bold(lg.title_text, lg.title_bold);
+          if (lg.title_family)         up['legend.title.font.family'] = lg.title_family;
+          if (lg.title_size != null)   up['legend.title.font.size'] = lg.title_size;
+          if (lg.title_color)          up['legend.title.font.color'] = lg.title_color;
+          if (lg.item_family)          up['legend.font.family'] = lg.item_family;
+          if (lg.item_size != null)    up['legend.font.size'] = lg.item_size;
+          if (lg.item_color)           up['legend.font.color'] = lg.item_color;
+      }
+
+      try { if (Object.keys(up).length > 0) Plotly.relayout(gd, up); } catch (e) {}
+
+      //match traces by name so they survive a data refresh
+      if (st.traces && gd.data) {
+          const itemBold = st.legend && st.legend.item_bold;
+          for (let i = 0; i < gd.data.length; i++) {
+              const raw = (gd.data[i].name || "").replace(/^<b>([\s\S]*)<\/b>$/, "$1");
+              const s = st.traces[raw];
+              const tup = {};
+              if (s) {
+                  if (s.color) { tup['line.color'] = s.color; tup['marker.color'] = s.color; }
+                  if (s.width != null)       tup['line.width'] = s.width;
+                  if (s.dash)                tup['line.dash'] = s.dash;
+                  if (s.marker_size != null) tup['marker.size'] = s.marker_size;
+                  if (s.mode)                tup['mode'] = s.mode;
+              }
+              if (itemBold != null) tup['name'] = bold(raw, itemBold);
+              if (Object.keys(tup).length > 0) {
+                  try { Plotly.restyle(gd, tup, [i]); } catch (e) {}
+              }
+          }
       }
   };
 

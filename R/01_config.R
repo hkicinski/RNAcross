@@ -7,6 +7,9 @@ r <- getOption("repos")
 r["CRAN"] <- "https://cloud.r-project.org"
 options(repos = r)
 
+MAX_UPLOAD_MB <- 2048  # 2 GB
+options(shiny.maxRequestSize = MAX_UPLOAD_MB * 1024^2)
+
 # debug mode configuration
 # set to TRUE to enable debug messages throughout the application
 DEBUG_MODE <- FALSE
@@ -79,6 +82,12 @@ if (length(.missing_bioc) > 0) {
 suppressMessages({
   # core data manipulation
   library(tidyverse)
+  library(dplyr)
+  library(tibble)
+  library(stringr)
+  library(purrr)
+  library(readr)
+  library(forcats)
   library(data.table)
   library(cowplot)
   library(tidyr)
@@ -114,10 +123,13 @@ suppressMessages({
   library(here)
 })
 
+#ggplot2 4.0 dropped is.waive(), which ggtree still calls for aligned tip labels
+if (!exists("is.waive")) {
+  assign("is.waive", function(x) inherits(x, "waiver"), envir = globalenv())
+}
+
 # data loading
-# load the RData file with HOG-based orthogroups
-# path relative to project root (where app.R is located)
-load(file.path("data", "06092026-updated.RData"))
+load(file.path("data", "07312026-updated.RData"))
 
 # gene lookup table preprocessing
 # preprocess gene lookup table at startup for faster queries
@@ -143,7 +155,7 @@ if (!requireNamespace('shinyWidgets', quietly = TRUE)) {
 }
 library(shinyWidgets)
 
-# default list of all supported species
+# default list GRE species
 ALL_SPECIES <- list(
   sc = list(
     name = "S. cerevisiae",

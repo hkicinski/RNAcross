@@ -465,3 +465,145 @@ calculate_ortholog_coverage <- function(gene_mapping, config) {
 
   return(coverage_stats)
 }
+
+#' Command palette gene suggestions
+#'
+#' Prefix matches first, topped up with substring matches, collapsed to one row
+#' per orthogroup. Orphan genes key on their own id since they have no HOG.
+#'
+#' @param lookup_table gene_lookup data.table (or data.frame)
+#' @param query Raw query string from the palette input
+#' @param hog_counts Named integer vector of species-per-HOG
+#' @param n_total Number of species in the current config
+#' @param limit Maximum rows to return
+#' @return List of suggestion lists (gene, label, detail, gene_id, hog_id)
+rnx_gene_suggestions <- function(lookup_table, query, hog_counts = integer(0),
+                                 n_total = 4L, limit = 5L) {
+  q <- toupper(trimws(query %||% ""))
+  if (!nzchar(q) || is.null(lookup_table) || !NROW(lookup_table)) return(list())
+
+  gl <- lookup_table
+  nm <- if ("gene_name_upper" %in% names(gl)) gl$gene_name_upper else toupper(as.character(gl$gene_name))
+  id <- if ("gene_id_upper" %in% names(gl)) gl$gene_id_upper else toupper(as.character(gl$gene_id))
+  nm[is.na(nm)] <- ""
+  id[is.na(id)] <- ""
+
+  ord <- unique(c(which(startsWith(nm, q)), which(startsWith(id, q))))
+  if (length(ord) < 40L) {
+    ord <- unique(c(ord, which(grepl(q, nm, fixed = TRUE)), which(grepl(q, id, fixed = TRUE))))
+  }
+  if (!length(ord)) return(list())
+  ord <- head(ord, 400L)
+
+  seen <- character(0)
+  out <- list()
+  for (i in ord) {
+    if (length(out) >= limit) break
+    hog <- as.character(gl$hog_id[i])
+    gene_id <- as.character(gl$gene_id[i])
+    gene_name <- as.character(gl$gene_name[i])
+    if (is.na(gene_name)) gene_name <- ""
+    has_hog <- !is.na(hog) && nzchar(hog)
+
+    key <- if (has_hog) hog else paste0("gene:", gene_id)
+    if (key %in% seen) next
+    seen <- c(seen, key)
+
+    label <- if (nzchar(gene_name)) gene_name else gene_id
+    coverage <- if (has_hog && !is.na(hog_counts[hog])) {
+      sprintf("%d / %d species", hog_counts[[hog]], n_total)
+    } else {
+      "unassigned"
+    }
+
+    out[[length(out) + 1L]] <- list(
+      gene = label,
+      label = label,
+      detail = if (identical(label, gene_id)) coverage else paste0(gene_id, " · ", coverage),
+      gene_id = gene_id,
+      hog_id = if (has_hog) hog else ""
+    )
+  }
+
+  #two hits sharing a name would run the same query, so fall back to the id
+  labels <- vapply(out, function(g) g$label, character(1))
+  dupes <- labels[duplicated(labels)]
+  if (length(dupes)) {
+    out <- lapply(out, function(g) {
+      if (g$label %in% dupes) g$gene <- g$gene_id
+      g
+    })
+  }
+  out
+}
+
+#' Orthogroup and coverage for a gene, without running a full query
+#'
+#' Cheap enough for the search pill and the resume card, which need the HOG and
+#' the species count before (or instead of) a real query_gene_flexible() run.
+#'
+#' @param lookup_table gene_lookup data.table (or data.frame)
+#' @param query Gene name or id
+#' @param hog_counts Named integer vector of species-per-HOG
+#' @param n_total Number of species in the current config
+#' @return List with found, gene_id, hog_id, n_species, n_total
+rnx_gene_scope_info <- function(lookup_table, query, hog_counts = integer(0), n_total = 4L) {
+  miss <- list(found = FALSE, gene_id = "", hog_id = "", n_species = 0L, n_total = n_total)
+  q <- toupper(trimws(query %||% ""))
+  if (!nzchar(q) || is.null(lookup_table) || !NROW(lookup_table)) return(miss)
+
+  gl <- lookup_table
+  nm <- if ("gene_name_upper" %in% names(gl)) gl$gene_name_upper else toupper(as.character(gl$gene_name))
+  id <- if ("gene_id_upper" %in% names(gl)) gl$gene_id_upper else toupper(as.character(gl$gene_id))
+  nm[is.na(nm)] <- ""
+  id[is.na(id)] <- ""
+
+  hit <- which(nm == q | id == q)
+  if (!length(hit)) return(miss)
+
+  i <- hit[1]
+  hog <- as.character(gl$hog_id[i])
+  has_hog <- !is.na(hog) && nzchar(hog)
+  n_sp <- if (has_hog && !is.na(hog_counts[hog])) as.integer(hog_counts[[hog]]) else 0L
+
+  list(
+    found = TRUE,
+    gene_id = as.character(gl$gene_id[i]),
+    hog_id = if (has_hog) hog else "",
+    n_species = n_sp,
+    n_total = n_total
+  )
+}
+
+#' Example genes that actually exist in the loaded data
+#'
+#' Keeps the launchpad and resume chips honest after a custom upload: anything
+#' the lookup table does not know is dropped, and the shortfall is topped up
+#' from the table itself.
+#'
+#' @param lookup_table gene_lookup data.table (or data.frame)
+#' @param candidates Character vector of preferred gene names
+#' @param n How many chips to return
+#' @return Character vector of gene labels
+rnx_example_genes <- function(lookup_table, candidates = EXAMPLE_GENES, n = 5L) {
+  if (is.null(lookup_table) || !NROW(lookup_table)) return(character(0))
+
+  gl <- lookup_table
+  nm <- if ("gene_name_upper" %in% names(gl)) gl$gene_name_upper else toupper(as.character(gl$gene_name))
+  id <- if ("gene_id_upper" %in% names(gl)) gl$gene_id_upper else toupper(as.character(gl$gene_id))
+  nm[is.na(nm)] <- ""
+  id[is.na(id)] <- ""
+
+  known <- unique(c(nm, id))
+  out <- candidates[toupper(candidates) %in% known]
+
+  #fall back to named genes from the loaded table, then to bare ids
+  if (length(out) < n) {
+    named <- unique(as.character(gl$gene_name[nzchar(nm)]))
+    out <- unique(c(out, named))
+  }
+  if (length(out) < n) {
+    out <- unique(c(out, as.character(gl$gene_id)))
+  }
+  head(out[nzchar(out)], n)
+}

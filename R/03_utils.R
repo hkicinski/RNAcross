@@ -17,6 +17,28 @@ hiddenInput <- function(inputId, value) {
   )
 }
 
+#' Normalize a user-entered hex color string
+#'
+#' Accepts 3- or 6-digit hex codes, with or without a leading '#', and returns
+#' a canonical uppercase 6-digit "#RRGGBB" string. Returns NULL for anything
+#' that is not yet a complete, valid hex color so that half-typed values
+#' (e.g. "#E4") are never applied.
+#'
+#' @param x Character hex string (e.g. "#e41b2c", "E41", "#abc")
+#' @return Canonical "#RRGGBB" string, or NULL if not a valid hex color
+normalize_hex_color <- function(x) {
+  if (is.null(x) || length(x) != 1 || is.na(x)) return(NULL)
+  x <- trimws(x)
+  if (!nzchar(x)) return(NULL)
+  if (!startsWith(x, "#")) x <- paste0("#", x)
+  if (grepl("^#[0-9A-Fa-f]{6}$", x)) return(toupper(x))
+  if (grepl("^#[0-9A-Fa-f]{3}$", x)) {
+    ch <- strsplit(substring(x, 2), "")[[1]]
+    return(toupper(paste0("#", ch[1], ch[1], ch[2], ch[2], ch[3], ch[3])))
+  }
+  NULL
+}
+
 apply_y_axis_range <- function(p, ps, base_rev = NULL) {
   if (is.null(ps) || !isTRUE(ps$y_axis_manual)) return(p)
   ymin <- suppressWarnings(as.numeric(ps$y_axis_min))

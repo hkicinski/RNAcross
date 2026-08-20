@@ -13,7 +13,7 @@
 #' @param config Species configuration list
 #' @param species_code Character species code
 #' @return data.table of expression data or NULL if no data found
-process_gene_group_data <- function(gene_groups, species_data, all_species_data, config, species_code, transform_type = "lcpm") {
+process_gene_group_data <- function(gene_groups, species_data, all_species_data, config, species_code, transform_type = "lcpm", study_design = GRE_study_design()) {
   # remove existing UI elements for combined selections
   for (sp_id in names(config)) {
     removeUI(
@@ -73,8 +73,8 @@ process_gene_group_data <- function(gene_groups, species_data, all_species_data,
               Group = gene_groups$group_name[gene_groups$group_member == gene],
               Species = config[[species_code]]$short,
               SpeciesCode = species_code,
-              Timepoint = factor(species_data$sample_info$Timepoint, levels = TIME_POINTS),
-              Replicate = species_data$sample_info$Replicate,
+              Timepoint = factor(condition_of(study_design, species_data$sample_info), levels = condition_levels(study_design)),
+              Replicate = replicate_of(study_design, species_data$sample_info),
               Expression = as.numeric(expr_matrix[gene_id, ]),
               stringsAsFactors = FALSE
             )
@@ -205,7 +205,7 @@ process_pathway_comparison <- function(pathway_definitions, species_data_list, c
 #' @param species_name Display name for species
 #' @param transform_type Transformation type ("lcpm" or "rlog")
 #' @return data.frame with pathway expression summaries
-process_single_species_pathway <- function(pathway_definitions, species_data, species_name, transform_type = "lcpm") {
+process_single_species_pathway <- function(pathway_definitions, species_data, species_name, transform_type = "lcpm", study_design = GRE_study_design()) {
   pathway_results <- list()
   gene_details <- list()
 
@@ -291,8 +291,8 @@ process_single_species_pathway <- function(pathway_definitions, species_data, sp
           Gene = gene,
           GeneID = gene_id,
           Species = species_name,
-          Timepoint = factor(sample_info$Timepoint, levels = TIME_POINTS),
-          Replicate = sample_info$Replicate,
+          Timepoint = factor(condition_of(study_design, sample_info), levels = condition_levels(study_design)),
+          Replicate = replicate_of(study_design, sample_info),
           Expression = as.numeric(lcpm_matrix[gene_id, ]),
           stringsAsFactors = FALSE
         )
@@ -538,7 +538,7 @@ preaggregate_species_hogs <- function(lcpm_matrix, species_hog_map, common_hogs,
 #' @param config Species configuration list
 #' @param transform_type Transformation type ("lcpm" or "rlog")
 #' @return data.frame with expression data for all genes across species
-extract_ortholog_expression <- function(gene_mapping, species_data_list, config = NULL, transform_type = "lcpm") {
+extract_ortholog_expression <- function(gene_mapping, species_data_list, config = NULL, transform_type = "lcpm", study_design = GRE_study_design()) {
   # prepare data structure to hold all expression values
   expression_data <- list()
 
@@ -607,8 +607,8 @@ extract_ortholog_expression <- function(gene_mapping, species_data_list, config 
             Gene = gene_name,
             OriginalID = gene_id,
             Species = species_display,
-            Timepoint = sample_info$Timepoint,
-            Replicate = sample_info$Replicate,
+            Timepoint = condition_of(study_design, sample_info),
+            Replicate = replicate_of(study_design, sample_info),
             Expression = expression_values,
             stringsAsFactors = FALSE
           )
@@ -679,7 +679,7 @@ prepare_heatmap_matrix <- function(expression_data, normalization = "zscore") {
     if (length(const_genes) > 0) {
       showNotification(
         paste("Note:", length(const_genes), "genes have constant expression and will be shown at z-score = 0"),
-        type = "info",
+        type = "message",
         duration = 5
       )
     }
@@ -702,7 +702,7 @@ prepare_heatmap_matrix <- function(expression_data, normalization = "zscore") {
 #' @param species_data_list List of species data structures
 #' @param config Species configuration list
 #' @return data.frame with expression data or NULL if no data found
-process_multi_species_gene_set <- function(gene_mapping, species_data_list, config, transform_type = "lcpm") {
+process_multi_species_gene_set <- function(gene_mapping, species_data_list, config, transform_type = "lcpm", study_design = GRE_study_design()) {
   all_expression_data <- list()
 
   for (gene_map in gene_mapping) {
@@ -751,8 +751,8 @@ process_multi_species_gene_set <- function(gene_mapping, species_data_list, conf
               GeneID = gene_id,
               Species = config[[sp_code]]$short,
               SpeciesCode = sp_code,
-              Timepoint = factor(sample_info$Timepoint, levels = TIME_POINTS),
-              Replicate = sample_info$Replicate,
+              Timepoint = factor(condition_of(study_design, sample_info), levels = condition_levels(study_design)),
+              Replicate = replicate_of(study_design, sample_info),
               Expression = as.numeric(lcpm_matrix[gene_id_to_use, ]),
               stringsAsFactors = FALSE
             )
@@ -774,6 +774,7 @@ process_multi_species_gene_set <- function(gene_mapping, species_data_list, conf
 # --- Gene Similarity Shape-Search Service Functions ---
 
 #' Convert character timepoints to numeric minutes
+#' Superseded by condition_positions(); kept for time-only callers outside R/.
 #' @param tp Character vector of timepoints (e.g. '15min', '1.5h')
 #' @return Numeric vector of minutes
 tp_to_minutes <- function(tp) {
@@ -788,28 +789,33 @@ tp_to_minutes <- function(tp) {
 #' @param mat Expression matrix
 #' @param sample_info Sample info dataframe
 #' @return Data frame with gene_id as rownames and timepoints as columns
-build_consensus_wide <- function(mat, sample_info) {
-  tp_order <- unique(sample_info$Timepoint)
+build_consensus_wide <- function(mat, sample_info, study_design = GRE_study_design()) {
+  cond_col <- condition_column_in(study_design, sample_info)
+  cond <- unique(sample_info[[cond_col]])
+  tp_order <- cond[condition_order(study_design, cond)]
   mat_long <- mat %>%
     as.data.frame() %>%
-    rownames_to_column("gene_id") %>%
-    pivot_longer(-gene_id, names_to = "Sample", values_to = "expression") %>%
-    left_join(sample_info, by = "Sample")
+    tibble::rownames_to_column("gene_id") %>%
+    tidyr::pivot_longer(-gene_id, names_to = "Sample", values_to = "expression") %>%
+    dplyr::left_join(sample_info, by = "Sample")
+  #order the axis before grouping, so the pivot lays columns out along the design
+  mat_long[[cond_col]] <- factor(mat_long[[cond_col]], levels = tp_order)
+  #unreplicated uploads carry no replicate column; z-score within one synthetic level
+  mat_long$.rep <- replicate_of(study_design, mat_long)
   z_rep <- mat_long %>%
-    group_by(gene_id, Replicate) %>%
-    mutate(
+    dplyr::group_by(gene_id, .rep) %>%
+    dplyr::mutate(
       expr_sd = sd(expression, na.rm = TRUE),
-      z_score = if_else(is.na(expr_sd) | expr_sd == 0, 0,
+      z_score = dplyr::if_else(is.na(expr_sd) | expr_sd == 0, 0,
                         (expression - mean(expression, na.rm = TRUE)) / expr_sd)
     ) %>%
-    ungroup()
+    dplyr::ungroup()
   consensus <- z_rep %>%
-    group_by(gene_id, Timepoint) %>%
-    summarise(consensus_z = mean(z_score, na.rm = TRUE), .groups = "drop")
-  consensus$Timepoint <- factor(consensus$Timepoint, levels = tp_order)
+    dplyr::group_by(gene_id, .data[[cond_col]]) %>%
+    dplyr::summarise(consensus_z = mean(z_score, na.rm = TRUE), .groups = "drop")
   consensus %>%
-    pivot_wider(names_from = Timepoint, values_from = consensus_z) %>%
-    column_to_rownames("gene_id")
+    tidyr::pivot_wider(names_from = dplyr::all_of(cond_col), values_from = consensus_z) %>%
+    tibble::column_to_rownames("gene_id")
 }
 
 #' Filter invariant genes
@@ -828,20 +834,27 @@ filter_invariant <- function(consensus_wide) {
 #' @param top_x Number of top matches to return
 #' @param all_species_data Global RNAcross data object
 #' @return List containing table, plot_data, query_id, and interpolation_gaps (if any)
-run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top_x, all_species_data) {
+run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top_x, all_species_data,
+                                  study_design = GRE_study_design()) {
   n_null <- 1000
   n_perm <- 1000
   set.seed(2026)
   
   get_sp_data <- function(sp) {
     sp_data <- all_species_data[[sp]]
-    mat <- if (!is.null(sp_data[["rlog"]])) sp_data[["rlog"]] else sp_data[[paste0(sp, "_rlog")]]
-    info <- if (!is.null(sp_data[["sample_info"]])) sp_data[["sample_info"]] else sp_data[[paste0(sp, "_sample_info")]]
-    list(mat = mat, sample_info = info)
+    pick <- function(kind) {
+      for (k in c(paste0(sp, "_", kind), kind)) if (!is.null(sp_data[[k]])) return(sp_data[[k]])
+      cand <- grep(paste0("(^|_)", kind, "(_|$)"), names(sp_data), value = TRUE)
+      if (length(cand) == 0) return(NULL)
+      yrs <- suppressWarnings(as.numeric(sub(".*_(\\d{4})$", "\\1", cand)))
+      yrs[is.na(yrs)] <- -1
+      sp_data[[cand[which.max(yrs)]]]
+    }
+    list(mat = pick("rlog"), sample_info = pick("sample_info"))
   }
   
   ref_data <- get_sp_data(ref_species)
-  ref_consensus_wide <- build_consensus_wide(ref_data$mat, ref_data$sample_info)
+  ref_consensus_wide <- build_consensus_wide(ref_data$mat, ref_data$sample_info, study_design)
   
   gene_lookup <- as.data.table(all_species_data$gene_lookup)
   lookup_match <- gene_lookup[species == ref_species & toupper(gene_name) == toupper(query_gene_name)]
@@ -860,20 +873,20 @@ run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top
   }
   
   ref_tp_labels <- colnames(ref_consensus_wide)
-  ref_tp_mins <- tp_to_minutes(ref_tp_labels)
+  ref_tp_mins <- condition_positions(study_design, ref_tp_labels)
   ref_query_profile <- as.numeric(ref_consensus_wide[query_gene_id, ])
-  
+
   tgt_data <- get_sp_data(tgt_species)
-  tgt_consensus_wide <- build_consensus_wide(tgt_data$mat, tgt_data$sample_info)
+  tgt_consensus_wide <- build_consensus_wide(tgt_data$mat, tgt_data$sample_info, study_design)
   tgt_tp_labels <- colnames(tgt_consensus_wide)
-  tgt_tp_mins <- tp_to_minutes(tgt_tp_labels)
-  
+  tgt_tp_mins <- condition_positions(study_design, tgt_tp_labels)
+
   grids_match <- identical(sort(ref_tp_mins), sort(tgt_tp_mins))
   interp_gaps <- NULL
-  
+
   if (grids_match) {
     aligned_query <- ref_query_profile[match(tgt_tp_mins, ref_tp_mins)]
-  } else {
+  } else if (can_interpolate(study_design)) {
     aligned <- approx(x = ref_tp_mins, y = ref_query_profile, xout = tgt_tp_mins, method = "linear")
     aligned_query <- aligned$y
     interp_gaps <- sapply(tgt_tp_mins, function(t) {
@@ -882,6 +895,9 @@ run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top
       upper <- min(ref_tp_mins[ref_tp_mins > t])
       upper - lower
     })
+  } else {
+    #unordered axis: interpolation is meaningless, so match levels by label
+    aligned_query <- ref_query_profile[match(tgt_tp_labels, ref_tp_labels)]
   }
   
   tgt_filtered <- filter_invariant(tgt_consensus_wide)
@@ -890,14 +906,14 @@ run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top
     cor(x, aligned_query, method = "pearson", use = "pairwise.complete.obs")
   })
   
-  cor_df <- tibble(gene_id = names(cors), pearson_r = cors) %>%
-    left_join(
-      gene_lookup %>% filter(species == tgt_species) %>% select(gene_id, gene_name) %>% distinct(gene_id, .keep_all = TRUE),
+  cor_df <- tibble::tibble(gene_id = names(cors), pearson_r = cors) %>%
+    dplyr::left_join(
+      gene_lookup %>% dplyr::filter(species == tgt_species) %>% dplyr::select(gene_id, gene_name) %>% dplyr::distinct(gene_id, .keep_all = TRUE),
       by = "gene_id"
     ) %>%
-    filter(!is.na(pearson_r)) %>%
-    filter(!(ref_species == tgt_species & gene_id == query_gene_id)) %>%
-    arrange(desc(pearson_r))
+    dplyr::filter(!is.na(pearson_r)) %>%
+    dplyr::filter(!(ref_species == tgt_species & gene_id == query_gene_id)) %>%
+    dplyr::arrange(dplyr::desc(pearson_r))
     
   null_sample_idx <- sample(seq_len(nrow(cor_df)), min(n_null, nrow(cor_df)))
   null_cors <- cor_df$pearson_r[null_sample_idx]
@@ -918,17 +934,17 @@ run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top
   }
   
   top_matches <- top_matches %>%
-    select(gene_id, gene_name, pearson_r, null_percentile, perm_p_value) %>%
-    mutate(
+    dplyr::select(gene_id, gene_name, pearson_r, null_percentile, perm_p_value) %>%
+    dplyr::mutate(
       pearson_r = round(pearson_r, 4),
       perm_p_value = round(perm_p_value, 4)
     )
-  
+
   top_plot_ids <- top_matches$gene_id
   tgt_long <- tgt_filtered[top_plot_ids, , drop = FALSE] %>%
     as.data.frame() %>%
-    rownames_to_column("gene_id") %>%
-    pivot_longer(-gene_id, names_to = "Timepoint", values_to = "consensus_z")
+    tibble::rownames_to_column("gene_id") %>%
+    tidyr::pivot_longer(-gene_id, names_to = "Timepoint", values_to = "consensus_z")
   tgt_long$label <- tgt_long$gene_id
   for (i in seq_len(nrow(tgt_long))) {
     gn <- cor_df$gene_name[cor_df$gene_id == tgt_long$gene_id[i]]
@@ -944,7 +960,7 @@ run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top
     label = paste0(query_gene_name, " (query)")
   )
   
-  plot_data <- bind_rows(tgt_long, ref_plot)
+  plot_data <- dplyr::bind_rows(tgt_long, ref_plot)
   chrono_order <- tgt_tp_labels[order(tgt_tp_mins)]
   plot_data$Timepoint <- factor(plot_data$Timepoint, levels = chrono_order)
   plot_data$type <- ifelse(plot_data$gene_id == "query", "query", "match")
@@ -953,6 +969,7 @@ run_similarity_search <- function(query_gene_name, ref_species, tgt_species, top
     table = top_matches,
     plot_data = plot_data,
     query_id = query_gene_id,
-    interp_gaps = interp_gaps
+    interp_gaps = interp_gaps,
+    null_cors = null_cors #background distribution for the null-density panel
   )
 }

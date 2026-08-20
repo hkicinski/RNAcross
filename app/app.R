@@ -15,6 +15,7 @@
 #source all modular components (paths relative to app/ directory)
 source("../R/01_config.R")
 source("../R/02_constants_themes.R")
+source("../R/02b_study_design.R")
 source("../R/03_utils.R")
 source("../R/04_data_io.R")
 source("../R/05_orthology_query.R")

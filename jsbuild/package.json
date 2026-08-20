@@ -1,0 +1,14 @@
+{
+  "name": "rnacross-jsbuild",
+  "private": true,
+  "version": "1.0.0",
+  "description": "React (reactR) build for the RNAcross study-design upload wizard. Outputs a self-contained IIFE to ../www.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "esbuild-plugin-external-global": "^1.0.1"
+  }
+}

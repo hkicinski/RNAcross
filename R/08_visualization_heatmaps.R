@@ -8,9 +8,9 @@
 #'
 #' @param pathway_data data.frame with Pathway, Species, Timepoint, MeanExpression columns
 #' @return data.frame with additional Log2FC column
-calculate_pathway_foldchange <- function(pathway_data) {
+calculate_pathway_foldchange <- function(pathway_data, study_design = GRE_study_design()) {
   # ensure timepoint is a factor with correct order
-  pathway_data$Timepoint <- factor(pathway_data$Timepoint, levels = TIME_POINTS)
+  pathway_data$Timepoint <- factor(pathway_data$Timepoint, levels = condition_levels(study_design))
 
   # calculate fold-change per pathway per species
   fc_data <- pathway_data %>%
@@ -18,7 +18,7 @@ calculate_pathway_foldchange <- function(pathway_data) {
     arrange(Timepoint) %>%
     mutate(
       BaselineExpr = {
-        baseline_vals <- MeanExpression[Timepoint == "0min"]
+        baseline_vals <- MeanExpression[Timepoint == condition_reference(study_design)]
         if (length(baseline_vals) == 0 || all(is.na(baseline_vals))) {
           # fallback to first timepoint if 0min missing
           first(MeanExpression)
@@ -46,7 +46,7 @@ calculate_pathway_foldchange <- function(pathway_data) {
 #' @return Plotly subplot with heatmaps for each species
 create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
                                    is_dark_mode = FALSE, cluster_pathways = FALSE,
-                                   timepoint_mode = "all") {
+                                   timepoint_mode = "all", study_design = GRE_study_design()) {
   # validate input
   if (is.null(pathway_data) || nrow(pathway_data) == 0) {
     return(plotly_empty() %>%
@@ -58,7 +58,7 @@ create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
 
   # prepare data based on value type
   if (value_type == "foldchange") {
-    heatmap_data <- calculate_pathway_foldchange(pathway_data)
+    heatmap_data <- calculate_pathway_foldchange(pathway_data, study_design = study_design)
     value_col <- "Log2FC"
     colorbar_title <- "log2 Fold-Change"
     zmid_val <- 0
@@ -93,8 +93,8 @@ create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
 
   # get timepoints present in data
   all_data_timepoints <- unique(as.character(heatmap_data$Timepoint))
-  all_data_timepoints <- all_data_timepoints[all_data_timepoints %in% TIME_POINTS]
-  all_data_timepoints <- TIME_POINTS[TIME_POINTS %in% all_data_timepoints]
+  all_data_timepoints <- all_data_timepoints[all_data_timepoints %in% condition_levels(study_design)]
+  all_data_timepoints <- condition_levels(study_design)[condition_levels(study_design) %in% all_data_timepoints]
 
   if (length(all_data_timepoints) == 0) {
     return(plotly_empty() %>%
@@ -109,7 +109,7 @@ create_pathway_heatmap <- function(pathway_data, value_type = "foldchange",
       unique(as.character(sp_data$Timepoint))
     })
     comparable_timepoints <- Reduce(intersect, timepoints_by_species)
-    comparable_timepoints <- TIME_POINTS[TIME_POINTS %in% comparable_timepoints]
+    comparable_timepoints <- condition_levels(study_design)[condition_levels(study_design) %in% comparable_timepoints]
 
     if (length(comparable_timepoints) == 0) {
       return(plotly_empty() %>%
@@ -458,7 +458,8 @@ aggregate_hog_expression <- function(expr_matrix, method = "eigengene") {
 #' @param config Optional species configuration list
 #' @param transform_type Transformation type ("lcpm" or "rlog")
 #' @return data.frame with Gene, OriginalID, Species, Timepoint, Replicate, Expression
-extract_ortholog_expression <- function(gene_mapping, species_data_list, config = NULL, transform_type = "lcpm") {
+extract_ortholog_expression <- function(gene_mapping, species_data_list, config = NULL, transform_type = "lcpm",
+                                        study_design = GRE_study_design()) {
   # prepare data structure to hold all expression values
   expression_data <- list()
 
@@ -527,8 +528,8 @@ extract_ortholog_expression <- function(gene_mapping, species_data_list, config 
             Gene = gene_name,
             OriginalID = gene_id,
             Species = species_display,
-            Timepoint = sample_info$Timepoint,
-            Replicate = sample_info$Replicate,
+            Timepoint = condition_of(study_design, sample_info),
+            Replicate = replicate_of(study_design, sample_info),
             Expression = expression_values,
             stringsAsFactors = FALSE
           )
@@ -569,9 +570,9 @@ extract_ortholog_expression <- function(gene_mapping, species_data_list, config 
 #' @param expression_data data.frame with Gene, Species, Timepoint, Expression columns
 #' @param normalization Normalization method: "zscore" or "none"
 #' @return Numeric matrix (genes x species-timepoints)
-prepare_heatmap_matrix <- function(expression_data, normalization = "zscore") {
+prepare_heatmap_matrix <- function(expression_data, normalization = "zscore", study_design = GRE_study_design()) {
   # ensure timepoints are properly ordered
-  expression_data$Timepoint <- factor(expression_data$Timepoint, levels = TIME_POINTS)
+  expression_data$Timepoint <- factor(expression_data$Timepoint, levels = condition_levels(study_design))
 
   # average replicates
   avg_data <- expression_data %>%
@@ -600,7 +601,7 @@ prepare_heatmap_matrix <- function(expression_data, normalization = "zscore") {
     if (length(const_genes) > 0) {
       showNotification(
         paste("Note:", length(const_genes), "genes have constant expression and will be shown at z-score = 0"),
-        type = "info",
+        type = "message",
         duration = 5
       )
     }
@@ -656,13 +657,20 @@ parse_time_to_minutes <- function(labels) {
   return(minutes)
 }
 
-#' Maps species-specific time point labels to a standardized T01-T10 format
-#' based on numerical sorting of minutes.
+#' Maps condition labels to a standardized T01-T10 format
 #'
-#' @param timepoints Character vector of timepoints (e.g. "0min", "30min", "1h")
+#' Ranks by the study design's axis order, so dose/genotype labels standardize
+#' correctly instead of all parsing to 0 minutes. Falls back to time parsing
+#' only for labels the design does not declare.
+#'
+#' @param timepoints Character vector of condition labels
+#' @param study_design study_design record supplying the axis order
 #' @return Character vector of standardized labels (T01, T02...)
 #' @export
-standardize_timepoints <- function(timepoints) {
+standardize_timepoints <- function(timepoints, study_design = GRE_study_design()) {
+  known <- as.character(timepoints) %in% as.character(condition_levels(study_design))
+  if (all(known)) return(condition_codes(study_design, timepoints))
+
   # Parse to numeric minutes
   minutes <- parse_time_to_minutes(timepoints)
 
@@ -783,16 +791,16 @@ parse_annotations <- function(file_path) {
 #' @param gene_order Vector of gene names defining the row order
 #' @param transform_type One of "log2fc", "zscore", "centered"
 #' @param time_axis_type One of "standardized", "raw", "intersection"
-#' @param baseline_tp Baseline timepoint identifier (default "0min")
 #' @param allowed_timepoints Optional, character vector of timepoints to include (for intersection)
+#' @param study_design study_design record; supplies the baseline via condition_reference()
 #' @return Matrix ready for heatmap (genes x timepoints)
 #' @export
 prepare_heatmap_matrix_publication <- function(expression_data, species_code, gene_order,
                                                transform_type = "centered",
                                                time_axis_type = "standardized",
-                                               baseline_tp = "0min",
                                                allowed_timepoints = NULL,
-                                               show_t0 = TRUE) {
+                                               show_t0 = TRUE,
+                                               study_design = GRE_study_design()) {
   # Filter for species
   sp_data <- if ("SpeciesCode" %in% names(expression_data)) {
     expression_data %>% filter(SpeciesCode == species_code)
@@ -814,12 +822,17 @@ prepare_heatmap_matrix_publication <- function(expression_data, species_code, ge
     }
   }
 
-  # Standardize timepoints if requested
+  # Standardize condition labels if requested
   if (time_axis_type == "standardized") {
-    sp_data$TimepointLabel <- standardize_timepoints(sp_data$Timepoint)
+    sp_data$TimepointLabel <- standardize_timepoints(sp_data$Timepoint, study_design)
   } else {
     sp_data$TimepointLabel <- sp_data$Timepoint
   }
+
+  #raw level -> column label, to locate the reference baseline after pivot
+  tp_label_map <- unique(data.frame(raw = as.character(sp_data$Timepoint),
+                                    label = as.character(sp_data$TimepointLabel),
+                                    stringsAsFactors = FALSE))
 
   # Aggregate replicates (mean)
   sp_agg <- sp_data %>%
@@ -834,15 +847,12 @@ prepare_heatmap_matrix_publication <- function(expression_data, species_code, ge
   mat <- as.matrix(mat_wide[, -1])
   rownames(mat) <- mat_wide$Gene
 
-  # Sort columns naturally (Chronological)
-  # If standardized, sort by T01, T02...
-  # If raw, use parse_time_to_minutes
+  # Sort columns along the design's axis order
   cols <- colnames(mat)
   if (time_axis_type == "standardized") {
     col_order <- stringr::str_sort(cols, numeric = TRUE)
   } else {
-    col_mins <- parse_time_to_minutes(cols)
-    col_order <- order(col_mins)
+    col_order <- condition_order(study_design, cols)
   }
   mat <- mat[, col_order, drop = FALSE]
 
@@ -857,8 +867,15 @@ prepare_heatmap_matrix_publication <- function(expression_data, species_code, ge
   }
 
   # Apply Transformations
-  baseline_cols <- grep("^0min$|^T01$|^0h$", colnames(mat_aligned), ignore.case = TRUE)
-  if (length(baseline_cols) == 0) baseline_cols <- 1 # Fallback to first
+  # Baseline = the study design's reference level (was a hardcoded 0min/T01/0h regex)
+  ref <- condition_reference(study_design)
+  if (is.null(ref)) {
+    baseline_cols <- integer(0)
+  } else {
+    ref_label <- tp_label_map$label[match(ref, tp_label_map$raw)]
+    baseline_cols <- which(colnames(mat_aligned) == ref_label)
+    if (length(baseline_cols) == 0) baseline_cols <- 1L # fallback to first
+  }
 
   if (transform_type == "log2fc") {
     mat_aligned <- compute_log2fc(mat_aligned, baseline_cols)
@@ -879,7 +896,7 @@ prepare_heatmap_matrix_publication <- function(expression_data, species_code, ge
     mat_aligned <- mat_aligned - row_means
   }
 
-  if (!show_t0) {
+  if (!show_t0 && length(baseline_cols) > 0) {
     # Remove baseline columns
     mat_aligned <- mat_aligned[, -baseline_cols, drop = FALSE]
   }
@@ -1313,10 +1330,57 @@ make_publication_heatmap <- function(mat, species_prefix, species_name, color_fu
 
     # Borders
     border = TRUE,
-    rect_gp = gpar(col = "white", lwd = 0.5) # Grid lines
+    rect_gp = gpar(col = NA) # Borderless cells: smooth, continuous fields (no white grid)
   )
 
   return(ht)
+}
+
+#' Sanitized diverging scale range for publication heatmaps
+#'
+#' A diverging log2 fold-change scale must straddle 0 (negative = blue,
+#' 0 = white, positive = red). If the requested min/max do not cross 0 (e.g.
+#' both negative), the derived color breaks would be non-monotonic, which makes
+#' circlize::colorRamp2 reverse the colors and wash out the data. This returns a
+#' safe, strictly-ordered range, falling back to a symmetric default when the
+#' request is degenerate.
+#'
+#' @param min_scale Requested lower bound (may be NULL/NA)
+#' @param max_scale Requested upper bound (may be NULL/NA)
+#' @return Numeric length-2 vector c(lo, hi) with lo < 0 < hi
+#' @export
+heatmap_scale_range <- function(min_scale = NULL, max_scale = NULL) {
+  min_scale <- suppressWarnings(as.numeric(min_scale)[1])
+  max_scale <- suppressWarnings(as.numeric(max_scale)[1])
+  if (is.na(min_scale)) min_scale <- -2
+  if (is.na(max_scale)) max_scale <- 2
+  lo <- min(min_scale, max_scale)
+  hi <- max(min_scale, max_scale)
+  # If the range does not straddle 0 it cannot make a valid diverging ramp;
+  # fall back to a clean symmetric default rather than reversing the colors.
+  if (!(lo < 0 && hi > 0)) {
+    lo <- -2
+    hi <- 2
+  }
+  c(lo, hi)
+}
+
+#' Diverging color ramp for publication heatmaps
+#'
+#' Perceptual ColorBrewer RdBu palette (steel-blue -> off-white -> brick-red)
+#' with five stops for a smooth, print-friendly gradient. 0 is anchored to the
+#' near-white midpoint. The scale is sanitized via [heatmap_scale_range()] so the
+#' breaks are always strictly increasing (negative = blue, positive = red).
+#'
+#' @param min_scale Lower bound of the scale (defaults to -2 when NULL)
+#' @param max_scale Upper bound of the scale (defaults to 2 when NULL)
+#' @return circlize::colorRamp2 mapping function
+#' @export
+heatmap_diverging_palette <- function(min_scale = NULL, max_scale = NULL) {
+  rng <- heatmap_scale_range(min_scale, max_scale)
+  cols <- c("#2166AC", "#67A9CF", "#F7F7F7", "#EF8A62", "#B2182B")
+  breaks <- c(rng[1], rng[1] / 2, 0, rng[2] / 2, rng[2])
+  circlize::colorRamp2(breaks, cols)
 }
 
 #' Create shared legend for 2x2 heatmap
@@ -1381,16 +1445,43 @@ draw_2x2_heatmap <- function(ht_list, legend) {
 
   grid.newpage()
 
+  # Draw one heatmap panel with its bold letter in a reserved top strip, so the
+  # letter sits above the (centered) species title and can never overlap it.
+  draw_labeled_panel <- function(ht, label, pos_row, pos_col) {
+    pushViewport(viewport(layout.pos.row = pos_row, layout.pos.col = pos_col))
+    pushViewport(viewport(layout = grid.layout(2, 1,
+                          heights = unit.c(unit(1.4, "lines"), unit(1, "null")))))
+    # top strip: panel letter, flush left
+    pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
+    grid.text(label, x = unit(1, "mm"), y = unit(0.5, "npc"),
+              just = c("left", "centre"),
+              gp = gpar(fontsize = 16, fontface = "bold"))
+    popViewport()
+    # heatmap body below the strip, inset from the left so it is not flush against
+    # the panel edge and the leftmost rotated timepoint label ("0min") is not clipped
+    pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
+    pushViewport(viewport(x = unit(6, "mm"), width = unit(1, "npc") - unit(8, "mm"),
+                          just = "left"))
+    if (!is.null(ht)) draw(ht, newpage = FALSE)
+    popViewport()
+    popViewport()
+    popViewport()
+    popViewport()
+  }
+
   if (length(ht_list) == 1) {
     # Single Heatmap Layout
     pushViewport(viewport(layout = grid.layout(1, 2, widths = unit(c(0.85, 0.15), "null"))))
 
-    # Heatmap
+    # Heatmap (inset from the left, matching the 2x2 panels)
     pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
+    pushViewport(viewport(x = unit(6, "mm"), width = unit(1, "npc") - unit(8, "mm"),
+                          just = "left"))
     if (!is.null(ht_list[[1]])) {
       draw(ht_list[[1]], newpage = FALSE)
     }
     # grid.text("A", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold")) # No label for single species
+    popViewport()
     popViewport()
 
     # Legend
@@ -1405,36 +1496,13 @@ draw_2x2_heatmap <- function(ht_list, legend) {
     pushViewport(viewport(layout = grid.layout(2, 3, widths = unit(c(1, 1, 0.5), "null"))))
 
     # Top Left: S. cerevisiae (or first species)
-    pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
-    if (length(ht_list) >= 1 && !is.null(ht_list[[1]])) {
-      draw(ht_list[[1]], newpage = FALSE)
-    }
-    grid.text("A", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-    popViewport()
-
+    draw_labeled_panel(if (length(ht_list) >= 1) ht_list[[1]] else NULL, "A", 1, 1)
     # Top Right: C. glabrata
-    pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2))
-    if (length(ht_list) >= 2 && !is.null(ht_list[[2]])) {
-      draw(ht_list[[2]], newpage = FALSE)
-    }
-    grid.text("B", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-    popViewport()
-
+    draw_labeled_panel(if (length(ht_list) >= 2) ht_list[[2]] else NULL, "B", 1, 2)
     # Bottom Left: C. albicans
-    pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
-    if (length(ht_list) >= 3 && !is.null(ht_list[[3]])) {
-      draw(ht_list[[3]], newpage = FALSE)
-    }
-    grid.text("C", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-    popViewport()
-
+    draw_labeled_panel(if (length(ht_list) >= 3) ht_list[[3]] else NULL, "C", 2, 1)
     # Bottom Right: K. lactis
-    pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 2))
-    if (length(ht_list) >= 4 && !is.null(ht_list[[4]])) {
-      draw(ht_list[[4]], newpage = FALSE)
-    }
-    grid.text("D", x = 0.02, y = 0.98, gp = gpar(fontsize = 16, fontface = "bold"))
-    popViewport()
+    draw_labeled_panel(if (length(ht_list) >= 4) ht_list[[4]] else NULL, "D", 2, 2)
 
     # Legend Column (Spanning both rows)
     pushViewport(viewport(layout.pos.row = 1:2, layout.pos.col = 3))

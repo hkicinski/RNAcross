@@ -14,6 +14,14 @@ ui <- page_navbar(
     useShinyjs(),
     tags$head(includeScript("www/interactive_editor.js")),
     tags$head(
+      tags$script(HTML(sprintf(
+        "window.RNX_TOOLS = %s; window.RNX_TOOL_GROUPS = %s;",
+        jsonlite::toJSON(RNX_TOOLS, auto_unbox = TRUE),
+        jsonlite::toJSON(RNX_TOOL_GROUPS)
+      ))),
+      includeScript("www/command_palette.js")
+    ),
+    tags$head(
       tags$meta(name = "theme-color", content = "#000814"),
       tags$meta(name = "color-scheme", content = "dark"),
       tags$style(HTML("html { color-scheme: dark; }"))
@@ -23,7 +31,8 @@ ui <- page_navbar(
       top = 100, right = 20, width = 320,
       fixed = TRUE,
       draggable = FALSE, # Manual JS drag
-      style = "z-index: 9999; background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none;",
+      # 1080 keeps it above content and modals but under the palette (1090)
+      style = "z-index: 1080; background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none;",
       div(
         id = "plot_editor_header",
         style = "padding: 10px 15px; background: var(--bs-primary); color: white; border-top-left-radius: 5px; border-top-right-radius: 5px; cursor: move; display: flex; justify-content: space-between; align-items: center;",
@@ -76,9 +85,13 @@ ui <- page_navbar(
       // --- Enter Key Submit Handlers ---
       $(document).on('keyup', function(e) {
         if (e.which == 13) {
+          // the palette input is an INPUT, so it would otherwise fall through to the search buttons
+          if (document.body.classList.contains('rnx-palette-open')) return;
+          if (document.activeElement && document.activeElement.id === 'rnx-palette-input') return;
+
           var tag = document.activeElement ? document.activeElement.tagName : '';
           if (tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'A' || tag === 'SELECT') return;
-          
+
           if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.selectize-control')) return;
 
           var possibleButtons = [
@@ -114,6 +127,7 @@ ui <- page_navbar(
       });
     ")),
     custom_css,
+    rnx_nav_css,
 
     # Fix Plotly pointer events and splash screen css
     tags$style(HTML("
@@ -337,45 +351,105 @@ ui <- page_navbar(
     # glow trail container (outside splash screen for z-index)
     div(class = "glow-trail", id = "glow-trail-container"),
 
-    # header bar
+    # top bar: replaces both the tab strip and the old bg-primary title row
     div(
-      class = "navbar-container",
+      class = "rnx-bar",
       div(
-        class = "d-flex justify-content-between align-items-center p-3 bg-primary text-white",
-        span(
-          div(
-            class = "icon-morph-container",
-            style = "margin-right: 3px; position: relative; top: 1px;",
-            icon("dna", class = "fas"),
-            icon("chart-line", class = "fas")
+        class = "rnx-brand",
+        icon("dna", class = "fas"),
+        span("RNAcross")
+      ),
+      # the pill carries the gene in scope, so there is no second row
+      div(
+        class = "rnx-pill",
+        tags$button(
+          id = "rnx-trigger",
+          type = "button",
+          class = "rnx-trigger",
+          role = "combobox",
+          `aria-haspopup` = "dialog",
+          `aria-controls` = "rnx-palette",
+          title = "Search a gene, or jump to a tool (Ctrl+K)",
+          icon("magnifying-glass"),
+          uiOutput("rnx_pill_content", class = "rnx-slot")
+        ),
+        uiOutput("rnx_pill_clear", class = "rnx-slot")
+      ),
+      # chips are drawn by command_palette.js from localStorage
+      div(id = "rnx-chips", class = "rnx-chips"),
+      div(class = "rnx-divider"),
+      div(
+        class = "rnx-utils",
+        actionButton(
+          "show_version_info",
+          label = NULL,
+          icon = icon("bullhorn"),
+          class = "rnx-util-btn",
+          title = "What's New"
+        ),
+        actionButton("show_help",
+          label = NULL,
+          icon = icon("circle-question", class = "far"),
+          class = "rnx-util-btn",
+          title = "Tutorial"
+        ),
+        actionButton("show_settings",
+          label = NULL,
+          icon = icon("sliders"),
+          class = "rnx-util-btn",
+          title = "Plot settings"
+        ),
+        actionButton("theme_toggle",
+          label = NULL,
+          icon = icon("moon", verify_fa = FALSE),
+          class = "rnx-util-btn",
+          title = "Toggle dark/light mode"
+        )
+      ),
+      uiOutput("rnx_export_slot", class = "rnx-slot")
+    ),
+
+    # command palette overlay; kept out of #splash-screen so it layers independently
+    div(
+      id = "rnx-palette",
+      class = "rnx-scrim",
+      `aria-hidden` = "true",
+      div(
+        id = "rnx-palette-card",
+        class = "rnx-palette-card",
+        role = "dialog",
+        `aria-modal` = "true",
+        `aria-label` = "Search genes and tools",
+        div(
+          class = "rnx-card-input",
+          icon("magnifying-glass"),
+          tags$input(
+            id = "rnx-palette-input",
+            type = "text",
+            autocomplete = "off",
+            spellcheck = "false",
+            placeholder = "Search a gene, or jump to a tool…",
+            role = "combobox",
+            `aria-expanded` = "false",
+            `aria-autocomplete` = "list",
+            `aria-controls` = "rnx-palette-results",
+            `aria-label` = "Search a gene, or jump to a tool"
           ),
-          span(style = "margin-left: 2px;", "Comparative Transcriptomic Analysis")
+          span(class = "rnx-esc", "esc")
         ),
         div(
-          class = "d-flex align-items-center",
-          actionButton(
-            "show_version_info",
-            label = NULL,
-            icon = icon("bullhorn"),
-            class = "btn-link text-white me-1",
-            title = "What's New"
-          ),
-          actionButton("show_help", "Tutorial",
-            icon = icon("question-circle"),
-            class = "btn-link text-white me-2"
-          ),
-          actionButton("show_settings",
-            label = NULL,
-            icon = icon("gear"),
-            class = "btn-link text-white me-2",
-            title = "Plot settings"
-          ),
-          actionButton("theme_toggle",
-            label = NULL,
-            icon = icon("moon", verify_fa = FALSE),
-            class = "btn-link text-white",
-            title = "Toggle dark/light mode"
-          )
+          id = "rnx-palette-results",
+          class = "rnx-results",
+          role = "listbox",
+          `aria-label` = "Results"
+        ),
+        div(
+          class = "rnx-card-footer",
+          span(span(class = "rnx-fkey", "↑↓"), "navigate"),
+          span(span(class = "rnx-fkey", "↵"), "open"),
+          span(span(class = "rnx-fkey", "⌘↵"), "open in new tab"),
+          div(class = "rnx-spacer"),
+          span(sprintf("%d tools · full gene index", length(RNX_TOOLS)))
         )
       )
     ),
@@ -776,31 +850,41 @@ ui <- page_navbar(
     ")),
 
     tags$script(HTML("
-      $(document).on('shiny:disconnected', function(event) {
-        if (document.getElementById('shiny-disconnected-overlay')) return;
+      function showRNAcrossFatalOverlay() {
+        if (document.getElementById('rnacross-fatal-overlay')) return;
+
+        var shinyDimmer = document.getElementById('shiny-disconnected-overlay');
+        if (shinyDimmer && shinyDimmer.parentNode) shinyDimmer.parentNode.removeChild(shinyDimmer);
 
         var overlay = document.createElement('div');
-        overlay.id = 'shiny-disconnected-overlay';
-        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#1a1a2e;z-index:99999;display:flex;align-items:center;justify-content:center;text-align:center;color:#e0e0e0;font-family:Inter,Segoe UI,sans-serif;';
+        overlay.id = 'rnacross-fatal-overlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#1a1a2e;z-index:2147483647;display:flex;align-items:center;justify-content:center;text-align:center;color:#e0e0e0;font-family:Inter,Segoe UI,sans-serif;pointer-events:auto;';
         overlay.innerHTML =
-          '<div style=\"max-width:500px;padding:40px;background:#16213e;border-radius:16px;border:1px solid #1a1a4e;\">' +
+          '<div style=\"max-width:500px;padding:40px;background:#16213e;border-radius:16px;border:1px solid #1a1a4e;pointer-events:auto;\">' +
             '<h2 style=\"color:#ff6b6b;margin-bottom:16px;font-size:1.6rem;\">Something went wrong</h2>' +
             '<p style=\"margin-bottom:12px;line-height:1.6;font-size:0.95rem;\">The app has encountered an error or lost connection to the server.</p>' +
             '<p style=\"margin-bottom:12px;line-height:1.6;font-size:0.95rem;\">Please try reloading the page. If the issue persists, report it:</p>' +
             '<p style=\"margin-bottom:12px;line-height:1.6;font-size:0.95rem;\">' +
-              '<a href=\"https://github.com/hkicinski/RNAcross/issues\" target=\"_blank\" style=\"color:#6ea8fe;text-decoration:underline;\">GitHub Issues</a>' +
+              '<a href=\"https://github.com/hkicinski/RNAcross/issues\" target=\"_blank\" style=\"color:#6ea8fe;text-decoration:underline;pointer-events:auto;\">GitHub Issues</a>' +
               ' &nbsp;|&nbsp; ' +
-              '<a href=\"mailto:hkicinski@uiowa.edu\" style=\"color:#6ea8fe;text-decoration:underline;\">hkicinski@uiowa.edu</a>' +
+              '<a href=\"mailto:hkicinski@uiowa.edu\" style=\"color:#6ea8fe;text-decoration:underline;pointer-events:auto;\">hkicinski@uiowa.edu</a>' +
             '</p>' +
-            '<button onclick=\"location.reload()\" style=\"display:inline-block;margin-top:20px;padding:10px 28px;background:#0d6efd;color:white;border:none;border-radius:8px;font-size:1rem;cursor:pointer;\">Reload App</button>' +
+            '<button id=\"rnacross-fatal-reload\" style=\"display:inline-block;margin-top:20px;padding:10px 28px;background:#0d6efd;color:white;border:none;border-radius:8px;font-size:1rem;cursor:pointer;pointer-events:auto;\">Reload App</button>' +
           '</div>';
         document.body.appendChild(overlay);
+
+        var reloadBtn = document.getElementById('rnacross-fatal-reload');
+        if (reloadBtn) reloadBtn.addEventListener('click', function() { location.reload(); });
 
         var waiter = document.querySelector('.waiter-overlay');
         if (waiter) waiter.style.display = 'none';
 
         var splash = document.getElementById('splash-screen');
         if (splash) splash.style.display = 'none';
+      }
+
+      $(document).on('shiny:disconnected', function(event) {
+        showRNAcrossFatalOverlay();
       });
 
       $(document).on('shiny:error', function(event) {
@@ -831,6 +915,7 @@ ui <- page_navbar(
 
     tags$style(HTML("
       #shiny-disconnected-screen { display: none !important; }
+      #shiny-disconnected-overlay { display: none !important; }
       .shiny-output-error { visibility: hidden; }
       .shiny-output-error:before { visibility: hidden; }
     "))
@@ -867,35 +952,24 @@ ui <- page_navbar(
     value = "gene_explorer",
     div(
       class = "gene-explorer-container",
-      style = "padding-bottom: 120px !important;",
 
-      # query panel
+      # the Gene Query Hub moved into the top bar, but its inputs stay in the DOM:
+      # the whole ~240-line search observer still drives itself off these two ids.
       div(
-        class = "query-panel",
-        h3("Gene Query Hub", class = "mb-4"),
-        p("Search for a gene to explore its orthogroup across all species. Your query will be available throughout all analysis tabs."),
-        fluidRow(
-          column(
-            width = 8,
-            textInput(
-              "global_gene_query",
-              label = NULL,
-              placeholder = "Enter gene name or ID (e.g., PHO4, YFR034C, CAGL0D05170g)",
-              width = "100%"
-            )
-          ),
-          column(
-            width = 4,
-            actionButton(
-              "global_search_button",
-              "Search",
-              icon = icon("search"),
-              class = "btn btn-primary w-100"
-            )
-          )
+        id = "rnx_legacy_query",
+        style = "display: none;",
+        textInput(
+          "global_gene_query",
+          label = NULL,
+          placeholder = "Enter gene name or ID (e.g., PHO4, YFR034C, CAGL0D05170g)",
+          width = "100%"
         ),
-
-        # query status
+        actionButton(
+          "global_search_button",
+          "Search",
+          icon = icon("search"),
+          class = "btn btn-primary"
+        ),
         div(
           id = "query_status_container",
           style = "display: none;",
@@ -903,6 +977,9 @@ ui <- page_navbar(
           uiOutput("query_status")
         )
       ),
+
+      # launchpad or resume card, whenever there is no query result to show
+      uiOutput("rnx_explorer_landing"),
 
       # results container
       div(
@@ -915,6 +992,33 @@ ui <- page_navbar(
             div(
               class = "tree-panel",
               h4("Phylogenetic Tree"),
+              div(
+                class = "mb-2",
+                actionButton("toggle_tree_editor", "Edit appearance",
+                  icon = icon("wand-magic-sparkles"),
+                  class = "btn btn-sm btn-outline-primary"
+                ),
+                actionButton("export_phylo_tree_btn", "Export tree",
+                  icon = icon("download"),
+                  class = "btn btn-sm btn-outline-primary ms-2"
+                )
+              ),
+              shinyjs::hidden(div(
+                id = "tree_aesthetic_editor",
+                class = "card mb-3",
+                div(
+                  class = "card-header py-2 d-flex justify-content-between align-items-center",
+                  strong("Tree Aesthetic Editor"),
+                  actionButton("close_tree_editor", "", icon = icon("times"),
+                    class = "btn-sm btn-link p-0 text-decoration-none border-0"
+                  )
+                ),
+                div(
+                  class = "card-body",
+                  style = "max-height: 460px; overflow-y: auto;",
+                  uiOutput("tree_editor_ui")
+                )
+              )),
               uiOutput("phylo_tree_plot_ui"),
               div(
                 class = "tree-legend",
@@ -995,7 +1099,23 @@ ui <- page_navbar(
           width = 9,
           div(
             class = "main-plot-area",
-            plotlyOutput("similarity_plot", height = "500px")
+            tabsetPanel(
+              id = "similarity_view_tabs",
+              tabPanel("Interactive",
+                div(class = "mt-2 text-muted", style = "font-size: 0.85em;",
+                  icon("wand-magic-sparkles"),
+                  " Click any element (title, axes, legend, a trace) to edit it. Edits carry over to the Publication tab."),
+                plotlyOutput("similarity_plot", height = "500px")),
+              tabPanel("Publication (ggprism)",
+                div(class = "mt-2 mb-2",
+                  actionButton("export_similarity_trajectory_btn", "Export trajectory",
+                    icon = icon("download"), class = "btn btn-sm btn-outline-primary"),
+                  actionButton("export_similarity_null_btn", "Export null distribution",
+                    icon = icon("download"), class = "btn btn-sm btn-outline-primary ms-2"),
+                  span(class = "text-muted ms-2", style = "font-size: 0.85em;",
+                    "Reflects the edits made on the Interactive tab.")),
+                plotOutput("similarity_prism_plot", height = "760px"))
+            )
           ),
           div(
             class = "mt-4",
@@ -1102,7 +1222,14 @@ ui <- page_navbar(
             div(
               class = "upload-step",
               h5("Step 3: Sample Metadata", icon("clipboard")),
-              p("Required columns: Sample, Timepoint, Replicate"),
+              p("Required: ", tags$code("Sample"), ", plus one column describing each sample."),
+              tags$small(
+                class = "text-muted d-block mb-2",
+                "That column can be named anything (", tags$code("Timepoint"), ", ",
+                tags$code("Dose"), ", ", tags$code("Genotype"), ", ",
+                tags$code("Phase"), "). You say which one it is in Step 6. ",
+                tags$code("Replicate"), " is optional."
+              ),
               uiOutput("sample_upload_ui"),
               hr()
             ),
@@ -1171,6 +1298,39 @@ ui <- page_navbar(
               hr()
             ),
 
+            # step 5b: gene trees, what the Gene Explorer draws
+            div(
+              class = "upload-step",
+              h5(
+                "Step 5b: Gene Trees", icon("sitemap"),
+                span("(Optional)", class = "badge badge-secondary ml-2")
+              ),
+              p("Newick trees, one per orthogroup. Without these the Gene Explorer has no tree to draw."),
+              fileInput("upload_gene_trees", "Gene trees:",
+                accept = c(".zip", ".tsv", ".csv", ".txt", ".nwk", ".newick", ".tree", ".tre"),
+                multiple = TRUE
+              ),
+              tags$small(
+                class = "text-muted d-block",
+                "Accepts an OrthoFinder ", tags$code("Gene_Trees/"), " folder zipped, ",
+                "loose ", tags$code(".nwk"), " files named after their orthogroup, ",
+                "or a two-column table of orthogroup and newick."
+              ),
+              hr()
+            ),
+
+            # step 6: describe the design (the wizard itself lives in the Design tab)
+            div(
+              class = "upload-step",
+              h5("Step 6: Describe Your Design", icon("compass-drafting")),
+              p("What the axis of your experiment is, and what it is measured against."),
+              actionButton("goto_design_tab", "Open the Design step",
+                icon = icon("arrow-right"), class = "btn btn-sm btn-outline-primary mb-2"
+              ),
+              uiOutput("design_status"),
+              hr()
+            ),
+
             # action buttons
             div(
               class = "mt-4",
@@ -1211,7 +1371,27 @@ ui <- page_navbar(
                 tabPanel("Expression", DTOutput("upload_expr_preview")),
                 tabPanel("Samples", DTOutput("upload_sample_preview")),
                 tabPanel("Annotations", DTOutput("upload_anno_preview")),
-                tabPanel("Orthology", DTOutput("upload_ortho_preview"))
+                tabPanel("Orthology", DTOutput("upload_ortho_preview")),
+                tabPanel(
+                  "Design",
+                  value = "design",
+                  div(
+                    class = "mt-2 mb-3",
+                    h5("Step 6: Describe Your Design"),
+                    tags$small(
+                      class = "text-muted",
+                      "Pick the column that is your experimental axis and say how its levels relate: ",
+                      "spaced numbers (a dose or time series), ordered but unspaced (growth phases), ",
+                      "or unordered (genotypes). Everything downstream reads this."
+                    )
+                  ),
+                  uiOutput("design_wizard_ui"), #rendered server-side (R/13 sourced after R/10)
+                  div(
+                    class = "mt-3",
+                    actionButton("apply_design", "Apply design", class = "btn btn-primary"),
+                    uiOutput("design_review")
+                  )
+                )
               )
             ),
 
@@ -1243,8 +1423,11 @@ ui <- page_navbar(
 
 
   # comparative view tab
+  # the five titles below double as their nav value; spelled out so the palette
+  # table and the existing updateTabsetPanel calls cannot drift apart
   nav_panel(
     "Comparative View",
+    value = "Comparative View",
     fluidRow(
       column(
         width = 3,
@@ -1348,6 +1531,7 @@ ui <- page_navbar(
   # gene group analysis tab
   nav_panel(
     "Gene Group Analysis",
+    value = "Gene Group Analysis",
     fluidRow(
       column(
         width = 3,
@@ -1692,6 +1876,7 @@ ui <- page_navbar(
   # pca tab
   nav_panel(
     "PCA",
+    value = "PCA",
     fluidRow(
       column(
         width = 3,
@@ -1776,6 +1961,7 @@ ui <- page_navbar(
   # cross-species heatmap tab
   nav_panel(
     "Cross-Species Heatmap",
+    value = "Cross-Species Heatmap",
     fluidRow(
       column(
         width = 3,
@@ -1850,6 +2036,7 @@ ui <- page_navbar(
   # ridgeline plots tab
   nav_panel(
     "Ridgeline Plots",
+    value = "Ridgeline Plots",
     fluidRow(
       column(
         width = 3,

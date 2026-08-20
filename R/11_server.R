@@ -221,7 +221,9 @@ server <- function(input, output, session) {
     validation_errors = list(),
     validation_warnings = list(),
     uploaded_data = list(),
-    custom_all_species_data = NULL
+    custom_all_species_data = NULL,
+    study_design = NULL, #wizard-built design; current_study_design() reads this
+    design_inferred = FALSE #TRUE when we fell back to an inferred design
   )
 
   # ortholog analysis state
@@ -339,25 +341,28 @@ server <- function(input, output, session) {
       DEFAULT_SPECIES_CONFIG
     }
     
-    if (!is.null(plot_settings$contrast_mode_enabled) && plot_settings$contrast_mode_enabled) {
-      base_config$sc$name <- "Saccharomyces cerevisiae (Contrast Mode)"
-    } else {
-      base_config$sc$name <- "Saccharomyces cerevisiae"
+    # only relabel sc when it is actually configured
+    if ("sc" %in% names(base_config)) {
+      base_config[["sc"]]$name <- if (isTRUE(plot_settings$contrast_mode_enabled)) {
+        "Saccharomyces cerevisiae (Contrast Mode)"
+      } else {
+        "Saccharomyces cerevisiae"
+      }
     }
-    
+
     base_config
   })
 
   # initialize plot settings
   plot_settings <- reactiveValues(
     # species identity
-    species_palette = "Dark2",
+    species_palette = STANDARD_SPECIES_PALETTE,
     species_colors = list(),
     species_shapes = list(),
     updating_colors_from_palette = FALSE,
 
     # global data settings
-    global_transform = "rlog",
+    global_transform = NULL, # NULL = follow the data
 
     # global line aesthetics
     line_thickness = 1,
@@ -437,6 +442,21 @@ server <- function(input, output, session) {
     }
     plot_settings$presets <- get_bundled_presets()
     plot_settings$initialized <- TRUE
+  })
+
+  # uploaded species join the config after init, so fill gaps; user picks stay
+  observeEvent(current_species_config(), {
+    req(plot_settings$initialized)
+    config <- current_species_config()
+    species_list <- sapply(config, function(x) x$short)
+    colors <- derive_species_colors(species_list, plot_settings$species_palette, NULL, config)
+    shapes <- derive_species_shapes(species_list, NULL, config)
+    for (nm in names(colors)) {
+      if (is.null(plot_settings$species_colors[[nm]])) plot_settings$species_colors[[nm]] <- colors[[nm]]
+    }
+    for (nm in names(shapes)) {
+      if (is.null(plot_settings$species_shapes[[nm]])) plot_settings$species_shapes[[nm]] <- shapes[[nm]]
+    }
   })
 
 
@@ -566,6 +586,15 @@ server <- function(input, output, session) {
     ignoreInit = TRUE
   )
 
+  #active study_design (R/02b): stock uses GRE design; uploaded design later
+  current_study_design <- reactive({
+    if (data_source() == "custom" && !is.null(upload_state$study_design)) {
+      upload_state$study_design
+    } else {
+      GRE_study_design()
+    }
+  })
+
   # get appropriate species data
   get_all_species_data <- reactive({
     if (data_source() == "custom" && !is.null(upload_state$custom_all_species_data)) {
@@ -603,7 +632,11 @@ server <- function(input, output, session) {
     current_query = NULL,
     query_result = NULL,
     tree_data = NULL,
-    last_search_time = NULL
+    last_search_time = NULL,
+    #ok / orphan / synteny / not_found / cached, so the pill can say what happened
+    last_status = NULL,
+    #when the cached session was saved, for the resume card's relative time
+    restored_at = NULL
   )
 
   # restore session on startup
@@ -816,7 +849,7 @@ server <- function(input, output, session) {
     req(input$sig_test_gene, input$group_viz_type == "bar")
 
     # Create all possible timepoint pairs
-    timepoint_pairs <- combn(TIME_POINTS, 2, simplify = FALSE)
+    timepoint_pairs <- combn(condition_levels(current_study_design()), 2, simplify = FALSE)
     comparisons <- sapply(timepoint_pairs, function(pair) {
       paste(pair[1], "vs.", pair[2])
     })
@@ -891,8 +924,8 @@ server <- function(input, output, session) {
           sample_metadata_list[[species_id]] <- data.frame(
             Sample = colnames(lcpm_matrix),
             Species = config[[species_id]]$short,
-            Timepoint = sample_info$Timepoint,
-            Replicate = sample_info$Replicate,
+            Timepoint = condition_of(current_study_design(), sample_info),
+            Replicate = replicate_of(current_study_design(), sample_info),
             stringsAsFactors = FALSE
           )
         }
@@ -968,7 +1001,7 @@ server <- function(input, output, session) {
           }
           
           species_data <- get_species_data(resolved_species, force_no_contrast = TRUE)
-          lcpm_data <- get_expression_matrix(resolved_species, plot_settings$global_transform, species_data)
+          lcpm_data <- get_expression_matrix(resolved_species, active_transform(), species_data)
           sample_info <- if (resolved_species == "cg") species_data$sample_info else species_data[[paste0(resolved_species, "_sample_info")]]
 
           if (is.null(lcpm_data) || is.null(sample_info)) {
@@ -993,8 +1026,9 @@ server <- function(input, output, session) {
             aggregation_method = aggregation_method,
             species_config = current_species_config(),
             all_species_data_obj = get_all_species_data(),
-            transform_type = plot_settings$global_transform,
-            plot_settings = reactiveValuesToList(plot_settings)
+            transform_type = active_transform(),
+            plot_settings = reactiveValuesToList(plot_settings),
+            study_design = current_study_design()
           )
 
           if (!is.null(plot_result)) {
@@ -1058,7 +1092,8 @@ server <- function(input, output, session) {
         expression_matrix = pca_data$expression_matrix,
         sample_info = pca_data$sample_info,
         is_dark_mode = dark_mode,
-        plot_settings = current_settings
+        plot_settings = current_settings,
+        study_design = current_study_design()
       )
     } else {
       create_multi_species_pca(
@@ -1067,8 +1102,9 @@ server <- function(input, output, session) {
         aggregation_method = pca_data$aggregation_method,
         species_config = current_species_config(),
         all_species_data_obj = get_all_species_data(),
-        transform_type = current_settings$global_transform,
-        plot_settings = current_settings
+        transform_type = active_transform(),
+        plot_settings = current_settings,
+        study_design = current_study_design()
       )
     }
   }
@@ -1156,7 +1192,8 @@ server <- function(input, output, session) {
         expression_matrix = plot_state$pca_data$expression_matrix,
         sample_info = plot_state$pca_data$sample_info,
         is_dark_mode = dark_mode,
-        plot_settings = current_settings
+        plot_settings = current_settings,
+        study_design = current_study_design()
       )
     } else {
       create_multi_species_pca(
@@ -1165,8 +1202,9 @@ server <- function(input, output, session) {
         aggregation_method = plot_state$pca_data$aggregation_method,
         species_config = current_species_config(),
         all_species_data_obj = get_all_species_data(),
-        transform_type = current_settings$global_transform,
-        plot_settings = current_settings
+        transform_type = active_transform(),
+        plot_settings = current_settings,
+        study_design = current_study_design()
       )
     }
 
@@ -1273,22 +1311,7 @@ server <- function(input, output, session) {
         class = "mb-3 p-3",
         style = "background-color: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;",
         h5(icon("database"), " Expression Data Source", style = "margin-top: 0;"),
-        radioButtons(
-          "settings_global_transform",
-          label = NULL,
-          choices = c("TMM + log2CPM" = "lcpm", "DESeq2 rlog" = "rlog"),
-          selected = isolate(plot_settings$global_transform),
-          inline = TRUE,
-          width = "100%"
-        ),
-        div(
-          class = "text-muted small",
-          if (isolate(plot_settings$global_transform) == "rlog") {
-            "Currently using rlog (variance stabilized) data"
-          } else {
-            "Currently using TMM-normalized log2CPM data"
-          }
-        ),
+        uiOutput("settings_transform_ui"),
         h5(icon("dna"), " ", tags$em("Saccharomyces cerevisiae"), " Dataset", style = "margin-top: 15px;"),
         materialSwitch(
           inputId = "settings_contrast_mode_enabled",
@@ -1343,9 +1366,12 @@ server <- function(input, output, session) {
             style = "padding: 15px;",
             h5("Species Color Palette"),
             selectInput("settings_species_palette", NULL,
-              choices = c("Dark2", "Set1", "Set2", "Paired", "Accent", "Okabe-Ito"),
+              choices = c(STANDARD_SPECIES_PALETTE, "Dark2", "Set1", "Set2", "Paired", "Accent", "Okabe-Ito"),
               selected = isolate(plot_settings$species_palette)
             ),
+            tags$small(class = "text-muted",
+              sprintf("%s uses the fixed RNAcross hues: S. cerevisiae #377EB8, C. glabrata #E41A1C, C. albicans #4DAF4A, K. lactis #FF7F00.",
+                      STANDARD_SPECIES_PALETTE)),
             hr(),
             h5("Per-Species Colors"),
             p(class = "text-muted", "Click to customize individual species colors"),
@@ -1368,7 +1394,7 @@ server <- function(input, output, session) {
             selectInput("settings_line_type", "Line Type:", choices = c("Solid" = "solid", "Dashed" = "dashed", "Dotted" = "dotted", "Dot-Dash" = "dotdash", "Long Dash" = "longdash", "Two Dash" = "twodash"), selected = isolate(plot_settings$line_type %||% "solid")),
             hr(),
             h5("Fixed Y-axis Range"),
-            p(class = "text-muted", "Apply a consistent Y-axis (expression) range across the Gene Group, Single Species, and Comparative line plots — on screen and in exports."),
+            p(class = "text-muted", "Apply a consistent Y-axis (expression) range across the Gene Group, Single Species, and Comparative line plots, on screen and in exports."),
             checkboxInput("settings_y_axis_manual", "Use fixed Y-axis range", value = isolate(isTRUE(plot_settings$y_axis_manual))),
             conditionalPanel(
               condition = "input.settings_y_axis_manual == true",
@@ -1726,13 +1752,31 @@ server <- function(input, output, session) {
       } else {
         "#808080"
       }
+      id_suffix <- gsub("[^a-zA-Z0-9]", "_", sp)
       div(
-        style = "display: inline-block; margin: 5px;",
+        style = "display: inline-block; margin: 5px; width: 150px; vertical-align: top;",
+        # visual swatch picker (click to choose)
         colourpicker::colourInput(
-          paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp)),
+          paste0("species_color_", id_suffix),
           label = sp,
           value = col,
           showColour = "background"
+        ),
+        # exact hex entry: plain text field so partial values are never
+        # auto-expanded; applied only once a complete hex is typed
+        div(
+          style = "margin-top: -8px;",
+          textInput(
+            paste0("species_color_hex_", id_suffix),
+            label = NULL,
+            value = col,
+            placeholder = "#RRGGBB"
+          ),
+          tags$small(
+            class = "text-muted",
+            style = "display: block; margin-top: -6px; font-size: 10px;",
+            "Hex (applies on pause)"
+          )
         )
       )
     })
@@ -1977,11 +2021,12 @@ server <- function(input, output, session) {
     plot_settings$species_colors <- new_colors
     # flag to prevent individual picker observer from triggering during palette update
     plot_settings$updating_colors_from_palette <- TRUE
-    # update colourInput UI elements to reflect new palette
+    # update colourInput + hex text UI elements to reflect new palette
     for (sp in species_list) {
-      input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
+      id_suffix <- gsub("[^a-zA-Z0-9]", "_", sp)
       if (sp %in% names(new_colors)) {
-        colourpicker::updateColourInput(session, input_id, value = new_colors[[sp]])
+        colourpicker::updateColourInput(session, paste0("species_color_", id_suffix), value = new_colors[[sp]])
+        updateTextInput(session, paste0("species_color_hex_", id_suffix), value = new_colors[[sp]])
       }
     }
     # reset flag after client round-trip completes
@@ -2153,6 +2198,31 @@ server <- function(input, output, session) {
   })
 
   # Global Data Settings
+  # offer a choice only when the data holds more than one matrix
+  output$settings_transform_ui <- renderUI({
+    avail <- available_transforms_current()
+    if (length(avail) == 0) {
+      return(div(class = "text-muted small", "No expression matrix loaded."))
+    }
+    if (length(avail) == 1) {
+      return(div(
+        class = "text-muted small",
+        paste0("Plotting ", expression_axis_label(), " (the only matrix in this dataset).")
+      ))
+    }
+    tagList(
+      radioButtons(
+        "settings_global_transform",
+        label = NULL,
+        choices = setNames(avail, vapply(avail, transform_choice_label, character(1))),
+        selected = active_transform(),
+        inline = TRUE,
+        width = "100%"
+      ),
+      div(class = "text-muted small", paste("Currently plotting", expression_axis_label()))
+    )
+  })
+
   observeEvent(input$settings_global_transform, {
     plot_settings$global_transform <- input$settings_global_transform
   })
@@ -2242,7 +2312,11 @@ server <- function(input, output, session) {
     config <- current_species_config()
     
     isolate({
-      species_list <- sapply(config, function(x) x$short)
+      #vapply, not sapply: an entry with no $short would yield a list and break the loop
+      species_list <- vapply(config, function(x) {
+        if (is.null(x$short) || !nzchar(x$short[1])) NA_character_ else as.character(x$short)[1]
+      }, character(1))
+      species_list <- species_list[!is.na(species_list)]
       if (isTRUE(contrast_enabled)) {
         species_list <- species_list[names(species_list) != "sc"]
         if (contrast_type == "contrast_2026") {
@@ -2256,23 +2330,53 @@ server <- function(input, output, session) {
       lapply(species_color_obs_manager$observers, function(o) o$destroy())
       lapply(species_shape_obs_manager$observers, function(o) o$destroy())
       
-      species_color_obs_manager$observers <- lapply(species_list, function(sp) {
-        input_id <- paste0("species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
-        observeEvent(input[[input_id]], {
-          val <- input[[input_id]]
+      #NULL-safe short-name index; sapply() returns a list if any entry lacks $short
+      config_shorts <- vapply(config, function(x) if (is.null(x$short)) NA_character_ else as.character(x$short)[1], character(1))
+      species_color_obs_manager$observers <- do.call(c, lapply(species_list, function(sp) {
+        id_suffix <- gsub("[^a-zA-Z0-9]", "_", sp)
+        color_id <- paste0("species_color_", id_suffix)
+        hex_id <- paste0("species_color_hex_", id_suffix)
+
+        # resolve the full binomial key once for this species
+        sp_full <- NULL
+        if (sp %in% config_shorts) {
+          sp_full <- config[[names(config)[match(sp, config_shorts)]]]$name
+        }
+
+        apply_species_color <- function(val) {
+          plot_settings$species_colors[[sp]] <- val
+          # also update full name key if it maps to a base species
+          if (!is.null(sp_full)) {
+            plot_settings$species_colors[[sp_full]] <- val
+          }
+        }
+
+        # visual swatch picker -> settings, mirrored into the hex text field
+        obs_color <- observeEvent(input[[color_id]], {
+          val <- input[[color_id]]
           if (!is.null(val) && val != "" && !isTRUE(plot_settings$updating_colors_from_palette)) {
-            plot_settings$species_colors[[sp]] <- val
-            # also update full name key if it maps to a base species
-            sp_full <- NULL
-            if (sp %in% sapply(config, function(x) x$short)) {
-              sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
-            }
-            if (!is.null(sp_full)) {
-              plot_settings$species_colors[[sp_full]] <- val
-            }
+            apply_species_color(val)
+            updateTextInput(session, hex_id, value = val)
           }
         }, ignoreInit = TRUE, ignoreNULL = TRUE)
-      })
+
+        # typed hex -> settings, debounced so it commits only after typing
+        # settles, and only for a complete valid hex (never a half-typed value)
+        hex_debounced <- debounce(reactive(input[[hex_id]]), 500)
+        obs_hex <- observeEvent(hex_debounced(), {
+          if (isTRUE(plot_settings$updating_colors_from_palette)) return()
+          norm <- normalize_hex_color(hex_debounced())
+          if (is.null(norm)) return()
+          apply_species_color(norm)
+          # sync the swatch, and canonicalize the field (e.g. #e41 -> #EE4411)
+          colourpicker::updateColourInput(session, color_id, value = norm)
+          if (!identical(norm, trimws(hex_debounced() %||% ""))) {
+            updateTextInput(session, hex_id, value = norm)
+          }
+        }, ignoreInit = TRUE, ignoreNULL = FALSE)
+
+        list(obs_color, obs_hex)
+      }))
 
       species_shape_obs_manager$observers <- lapply(species_list, function(sp) {
         input_id <- paste0("species_shape_", gsub("[^a-zA-Z0-9]", "_", sp))
@@ -2282,8 +2386,8 @@ server <- function(input, output, session) {
             plot_settings$species_shapes[[sp]] <- as.integer(val)
             # also update full name key if it maps to a base species
             sp_full <- NULL
-            if (sp %in% sapply(config, function(x) x$short)) {
-              sp_full <- config[[names(config)[sapply(config, function(x) x$short == sp)]]]$name
+            if (sp %in% config_shorts) {
+              sp_full <- config[[names(config)[match(sp, config_shorts)]]]$name
             }
             if (!is.null(sp_full)) {
               plot_settings$species_shapes[[sp_full]] <- as.integer(val)
@@ -2318,7 +2422,7 @@ server <- function(input, output, session) {
     current$presets <- NULL
     current$initialized <- NULL
     plot_settings$presets[[preset_name]] <- current
-    showNotification(paste("Saved preset:", preset_name), type = "success")
+    showNotification(paste("Saved preset:", preset_name), type = "message")
     updateTextInput(session, "settings_preset_name", value = "")
     updateSelectInput(session, "settings_load_preset",
       choices = c("Select..." = "", names(plot_settings$presets))
@@ -2377,10 +2481,9 @@ server <- function(input, output, session) {
         sp_config <- config[[species_id]]
         
         data <- list(
-          species_name = if (!is.null(sp_config$short)) sp_config$short else species_id,
-          anno = current_data$sc$sc_anno_2023
+          species_name = if (!is.null(sp_config$short)) sp_config$short else species_id
         )
-        
+
         contrast_mode <- isTRUE(plot_settings$contrast_mode_enabled) && !force_no_contrast
         
         if (isTRUE(plot_settings$contrast_mode_enabled) && force_no_contrast) {
@@ -2393,85 +2496,76 @@ server <- function(input, output, session) {
         
         if (contrast_mode) {
           if (contrast_type == "contrast_2026") {
-            # Joint 2026 Data (WT vs Mut)
-            full_sample_info <- current_data$sc$sc_sample_info_2026
-            full_lcpm <- current_data$sc$sc_lcpm_2026
-            full_rlog <- current_data$sc$sc_rlog_2026
-            
-            keep_idx <- rep(TRUE, nrow(full_sample_info))
-            if ("Condition" %in% names(full_sample_info)) {
-              keep_idx <- keep_idx & (full_sample_info$Condition == "noPi")
-            }
-            
-            subset_info <- full_sample_info[keep_idx, , drop = FALSE]
-            # Assign Contrast_Series
-            subset_info$Contrast_Series <- ifelse(grepl("^yH545\\.", subset_info$Sample), "WT 2026", "Mutant 2026")
-            
-            data$sample_info <- as_tibble(subset_info)
-            keep_samples <- data$sample_info$Sample
-            data$lcpm <- full_lcpm[, keep_samples, drop = FALSE]
-            data$rlog <- full_rlog[, keep_samples, drop = FALSE]
-            
+            # 2026 WT (yH545) vs ppx1d ppn1d KO (yH1053), each normalized on its own
+            info_ko <- current_data$sc$sc_sample_info_KO
+            info_ko <- info_ko[info_ko$Condition == "noPi", , drop = FALSE]
+            info_ko$Contrast_Series <- "Mutant 2026"
+
+            info_wt <- current_data$sc$sc_sample_info
+            info_wt <- info_wt[info_wt$Condition == "noPi", , drop = FALSE]
+            info_wt$Contrast_Series <- "WT 2026"
+
+            data$sample_info <- as_tibble(rbind(info_ko, info_wt))
+
+            lcpm_ko <- current_data$sc$sc_lcpm_KO[, info_ko$Sample, drop = FALSE]
+            rlog_ko <- current_data$sc$sc_rlog_KO[, info_ko$Sample, drop = FALSE]
+            lcpm_wt <- current_data$sc$sc_lcpm[, info_wt$Sample, drop = FALSE]
+            rlog_wt <- current_data$sc$sc_rlog[, info_wt$Sample, drop = FALSE]
+
+            common_lcpm <- intersect(rownames(lcpm_ko), rownames(lcpm_wt))
+            common_rlog <- intersect(rownames(rlog_ko), rownames(rlog_wt))
+
+            data$lcpm <- cbind(lcpm_ko[common_lcpm, ], lcpm_wt[common_lcpm, ])
+            data$rlog <- cbind(rlog_ko[common_rlog, ], rlog_wt[common_rlog, ])
+            data$anno <- current_data$sc$sc_anno
+
           } else if (contrast_type == "contrast_wt") {
             # 2023 WT vs 2026 WT
-            # 2023 base
             info_2023 <- current_data$sc$sc_sample_info_2023
             info_2023$Contrast_Series <- "WT 2023"
-            
-            # 2026 WT
-            full_sample_info <- current_data$sc$sc_sample_info_2026
-            keep_idx <- grepl("^yH545\\.", full_sample_info$Sample)
-            if ("Condition" %in% names(full_sample_info)) {
-              keep_idx <- keep_idx & (full_sample_info$Condition == "noPi")
-            }
-            info_2026 <- full_sample_info[keep_idx, , drop = FALSE]
+
+            info_2026 <- current_data$sc$sc_sample_info
+            info_2026 <- info_2026[info_2026$Condition == "noPi", , drop = FALSE]
             info_2026$Contrast_Series <- "WT 2026"
-            
+
             # Align columns for rbind
             common_cols <- intersect(names(info_2023), names(info_2026))
             info_2023_sub <- info_2023[, common_cols, drop = FALSE]
             info_2026_sub <- info_2026[, common_cols, drop = FALSE]
-            
+
             data$sample_info <- as_tibble(rbind(info_2023_sub, info_2026_sub))
-            
-            # Cbind matrices
+
             lcpm_2023 <- current_data$sc$sc_lcpm_2023
             rlog_2023 <- current_data$sc$sc_rlog_2023
-            
-            lcpm_2026 <- current_data$sc$sc_lcpm_2026[, info_2026$Sample, drop = FALSE]
-            rlog_2026 <- current_data$sc$sc_rlog_2026[, info_2026$Sample, drop = FALSE]
-            
-            # Only keep common genes
-            common_genes <- intersect(rownames(lcpm_2023), rownames(lcpm_2026))
-            
-            data$lcpm <- cbind(lcpm_2023[common_genes, ], lcpm_2026[common_genes, ])
-            data$rlog <- cbind(rlog_2023[common_genes, ], rlog_2026[common_genes, ])
+            lcpm_2026 <- current_data$sc$sc_lcpm[, info_2026$Sample, drop = FALSE]
+            rlog_2026 <- current_data$sc$sc_rlog[, info_2026$Sample, drop = FALSE]
+
+            common_lcpm <- intersect(rownames(lcpm_2023), rownames(lcpm_2026))
+            common_rlog <- intersect(rownames(rlog_2023), rownames(rlog_2026))
+
+            data$lcpm <- cbind(lcpm_2023[common_lcpm, ], lcpm_2026[common_lcpm, ])
+            data$rlog <- cbind(rlog_2023[common_rlog, ], rlog_2026[common_rlog, ])
+            data$anno <- current_data$sc$sc_anno
           }
         } else {
           # Standard Single Dataset Mode
           if (sc_dataset_choice == "2023") {
+            data$anno <- current_data$sc$sc_anno_2023
             data$sample_info <- as_tibble(current_data$sc$sc_sample_info_2023)
             data$lcpm <- current_data$sc$sc_lcpm_2023
             data$rlog <- current_data$sc$sc_rlog_2023
           } else {
-            full_sample_info <- current_data$sc$sc_sample_info_2026
-            full_lcpm <- current_data$sc$sc_lcpm_2026
-            full_rlog <- current_data$sc$sc_rlog_2026
-            
-            strain_regex <- paste0("^", sc_dataset_choice, "\\.")
-            keep_idx <- grepl(strain_regex, full_sample_info$Sample)
-            if ("Condition" %in% names(full_sample_info)) {
-              keep_idx <- keep_idx & (full_sample_info$Condition == "noPi")
-            }
-            
-            if (!any(keep_idx)) stop(paste("Regex/filter mismatch: no samples found for", sc_dataset_choice))
-            
-            subset_info <- full_sample_info[keep_idx, , drop = FALSE]
+            # yH545 (WT) is unsuffixed, yH1053 (ppx1d ppn1d KO) carries the _KO suffix
+            suffix <- if (sc_dataset_choice == "yH1053") "_KO" else ""
+
+            full_sample_info <- current_data$sc[[paste0("sc_sample_info", suffix)]]
+            subset_info <- full_sample_info[full_sample_info$Condition == "noPi", , drop = FALSE]
             data$sample_info <- as_tibble(subset_info)
-            
+
             keep_samples <- data$sample_info$Sample
-            data$lcpm <- full_lcpm[, keep_samples, drop = FALSE]
-            data$rlog <- full_rlog[, keep_samples, drop = FALSE]
+            data$anno <- current_data$sc[[paste0("sc_anno", suffix)]]
+            data$lcpm <- current_data$sc[[paste0("sc_lcpm", suffix)]][, keep_samples, drop = FALSE]
+            data$rlog <- current_data$sc[[paste0("sc_rlog", suffix)]][, keep_samples, drop = FALSE]
           }
         }
         
@@ -2530,6 +2624,33 @@ server <- function(input, output, session) {
     }
     get(cache_key, envir = species_data_cache)
   }
+
+  # transforms the loaded data actually carries, across the active species
+  available_transforms_current <- reactive({
+    config <- current_species_config()
+    tts <- unlist(lapply(names(config), function(sp) {
+      available_transforms(sp, get_species_data(sp))
+    }))
+    if (is.null(tts)) character(0) else KNOWN_TRANSFORMS[KNOWN_TRANSFORMS %in% tts]
+  })
+
+  # an explicit pick only when the data offers it, else whatever the data has
+  active_transform <- reactive({
+    avail <- available_transforms_current()
+    chosen <- plot_settings$global_transform
+    if (!is.null(chosen) && chosen %in% avail) chosen else if (length(avail)) avail[[1]] else NULL
+  })
+
+  # axis label follows the loaded matrices rather than a fixed pipeline name
+  expression_axis_label <- reactive({
+    tt <- active_transform()
+    m <- NULL
+    for (sp in names(current_species_config())) {
+      m <- get_expression_matrix(sp, tt, get_species_data(sp))
+      if (!is.null(m)) break
+    }
+    get_expression_label(tt, m)
+  })
 
   # FIXED Combined view search handler
   observeEvent(input$combined_search_button, {
@@ -3074,14 +3195,15 @@ server <- function(input, output, session) {
             current_settings <- reactiveValuesToList(plot_settings)
 
             p <- create_gene_plot(
-              lc = get_expression_matrix(sp_id, plot_settings$global_transform, species_data),
+              lc = get_expression_matrix(sp_id, active_transform(), species_data),
               gene = sp_state$gene,
               sample_info = species_data$sample_info,
               species_name = config[[sp_id]]$short,
               is_dark_mode = is_dark(),
               species_colors = species_colors_dynamic(),
-              transform_type = plot_settings$global_transform,
-              plot_settings = current_settings
+              transform_type = active_transform(),
+              plot_settings = current_settings,
+              study_design = current_study_design()
             )
             apply_y_axis_range(p, plot_settings, base_rev = paste0(sp_id, "_gene_plot"))
           })
@@ -3095,7 +3217,10 @@ server <- function(input, output, session) {
             species_data <- get_species_data(sp_id)
             gene_info <- species_data$anno[species_data$anno$GeneID == sp_state$gene, ]
             if (nrow(gene_info) > 0) {
-              paste("Gene ID:", sp_state$gene, "\nGene Name:", gene_info$GeneName[1], "\nChromosome:", gene_info$Chr[1])
+              info <- paste("Gene ID:", sp_state$gene, "\nGene Name:", gene_info$GeneName[1])
+              #Chr is optional; skip the line rather than printing an empty one
+              if (!is.null(gene_info$Chr)) info <- paste0(info, "\nChromosome: ", gene_info$Chr[1])
+              info
             } else {
               paste("Gene ID:", sp_state$gene)
             }
@@ -3228,7 +3353,7 @@ server <- function(input, output, session) {
     for (species_code in names(selected_genes_list)) {
       species_data <- get_species_data(species_code, force_no_contrast = FALSE)
       gene_ids <- selected_genes_list[[species_code]]
-      expr_matrix <- get_expression_matrix(species_code, plot_settings$global_transform, species_data)
+      expr_matrix <- get_expression_matrix(species_code, active_transform(), species_data)
 
       for (gene_id in gene_ids) {
         gene_id_to_use <- gene_id
@@ -3255,8 +3380,8 @@ server <- function(input, output, session) {
             GeneID = gene_id,
             Species = species_name,
             SpeciesCode = species_code,
-            Timepoint = factor(species_data$sample_info$Timepoint, levels = TIME_POINTS),
-            Replicate = species_data$sample_info$Replicate,
+            Timepoint = factor(condition_of(current_study_design(), species_data$sample_info), levels = condition_levels(current_study_design())),
+            Replicate = replicate_of(current_study_design(), species_data$sample_info),
             Expression = as.numeric(expr_matrix[gene_id_to_use, ])
           )
           
@@ -3302,13 +3427,13 @@ server <- function(input, output, session) {
     encoding_color <- plot_settings$encoding_multigene_color
     encoding_secondary <- plot_settings$encoding_multigene_secondary
     normalize_baseline <- isTRUE(input$normalize_to_baseline)
-    transform_type <- plot_settings$global_transform
+    transform_type <- active_transform()
 
     if (normalize_baseline) {
       plot_data <- plot_data %>%
         group_by(Gene, Species, Replicate) %>%
         mutate(
-          Baseline = Expression[Timepoint == "0min"][1],
+          Baseline = Expression[Timepoint == condition_reference(current_study_design())][1],
           Expression = Expression - Baseline
         ) %>%
         ungroup() %>%
@@ -3446,10 +3571,10 @@ server <- function(input, output, session) {
 
     p <- p +
       labs(
-        y = if (normalize_baseline) "log2 Fold-Change (vs. 0 min)" else get_expression_label(transform_type),
+        y = if (normalize_baseline) "log2 Fold-Change (vs. 0 min)" else expression_axis_label(),
         title = "Cross-species Expression Comparison",
         subtitle = paste("Comparing", length(unique(plot_data$Gene)), "genes across", length(unique(plot_data$Species)), "species"),
-        x = "Timepoint"
+        x = condition_label(current_study_design())
       ) +
       theme_minimal() +
       theme(
@@ -3485,7 +3610,14 @@ server <- function(input, output, session) {
         yaxis = list(tickfont = list(size = 11))
       ) %>%
       apply_y_axis_range(plot_settings, base_rev = "combined_gene_plot") %>%
-      config(displayModeBar = TRUE, modeBarButtons = list(list("zoom2d", "pan2d", "resetScale2d", "toImage")))
+      config(displayModeBar = TRUE, modeBarButtons = list(list("zoom2d", "pan2d", "resetScale2d", "toImage"))) %>%
+      htmlwidgets::onRender("
+        function(el, x) {
+          if (typeof window.initInteractiveEditor === 'function') {
+            window.initInteractiveEditor(el);
+          }
+        }
+      ")
   })
 
   observeEvent(input$export_combined_plot_btn, {
@@ -3568,7 +3700,7 @@ server <- function(input, output, session) {
       cluster_rows = input$cluster_rows,
       cluster_cols = input$cluster_cols,
       config = config,
-      transform_type = plot_settings$global_transform
+      transform_type = active_transform()
     )
     plot_state$heatmap_ready <- TRUE
 
@@ -3597,7 +3729,8 @@ server <- function(input, output, session) {
           config = hd$config,
           all_species_data = get_all_species_data(),
           transform_type = hd$transform_type,
-          plot_settings = current_settings
+          plot_settings = current_settings,
+          study_design = current_study_design()
         )
       },
       error = function(e) {
@@ -4327,7 +4460,8 @@ server <- function(input, output, session) {
               pathway_defs,
               species_data,
               species_name,
-              plot_settings$global_transform
+              active_transform(),
+              study_design = current_study_design()
             )
           }
 
@@ -4359,9 +4493,9 @@ server <- function(input, output, session) {
               group_by(Pathway, Species) %>%
               summarise(
                 NGenes = first(NGenes),
-                Mean_Baseline = MeanExpression[Timepoint == "0min"],
+                Mean_Baseline = MeanExpression[Timepoint == condition_reference(current_study_design())],
                 Mean_Peak = max(MeanExpression, na.rm = TRUE),
-                Mean_Final = MeanExpression[Timepoint == "8h"],
+                Mean_Final = MeanExpression[Timepoint == tail(condition_levels(current_study_design()), 1L)],
                 .groups = "drop"
               )
 
@@ -4376,7 +4510,7 @@ server <- function(input, output, session) {
             }
 
             if (input$pathway_value_type == "foldchange") {
-              fc_summary <- calculate_pathway_foldchange(pathway_results) %>%
+              fc_summary <- calculate_pathway_foldchange(pathway_results, study_design = current_study_design()) %>%
                 group_by(Pathway, Species) %>%
                 summarise(
                   Max_FoldChange = max(abs(Log2FC), na.rm = TRUE),
@@ -4530,7 +4664,8 @@ server <- function(input, output, session) {
             ortholog_state$gene_mapping,
             species_data_list,
             config,
-            plot_settings$global_transform
+            active_transform(),
+            study_design = current_study_design()
           )
 
           if (is.null(plot_data) || nrow(plot_data) == 0) {
@@ -4586,7 +4721,8 @@ server <- function(input, output, session) {
             current_data,
             config,
             input$group_analysis_species,
-            plot_settings$global_transform
+            active_transform(),
+            study_design = current_study_design()
           )
         }
 
@@ -4691,7 +4827,7 @@ server <- function(input, output, session) {
   })
 
   # Trigger analysis when data source changes (fixes broken toggle)
-  observeEvent(plot_settings$global_transform, {
+  observeEvent(active_transform(), {
     if (isTRUE(gene_group_state$ready)) {
       run_gene_group_analysis()
     }
@@ -4713,7 +4849,8 @@ server <- function(input, output, session) {
         value_type = params$value_type,
         is_dark_mode = is_dark(),
         cluster_pathways = params$cluster_pathways,
-        timepoint_mode = params$timepoint_mode
+        timepoint_mode = params$timepoint_mode,
+        study_design = current_study_design()
       )
     }
     # Handle Gene Group Mode (Original Logic Refactored)
@@ -4732,7 +4869,7 @@ server <- function(input, output, session) {
           if (params$data_transform == "log2fc") {
             # Calculate baseline (0min) per Gene and Species
             baseline_data <- plot_data %>%
-              filter(Timepoint == "0min") %>%
+              filter(Timepoint == condition_reference(current_study_design())) %>%
               group_by(Gene, Species) %>%
               summarise(Baseline = mean(Expression, na.rm = TRUE), .groups = "drop")
 
@@ -4785,7 +4922,7 @@ server <- function(input, output, session) {
             ) %>%
               layout(
                 title = "Multi-Species Mean Gene Expression",
-                xaxis = list(title = "Timepoint"),
+                xaxis = list(title = condition_label(current_study_design())),
                 yaxis = list(title = y_label),
                 hovermode = "closest",
                 plot_bgcolor = if (is_dark()) "#2c3034" else "white",
@@ -4845,7 +4982,7 @@ server <- function(input, output, session) {
                 "Comparing", length(unique(plot_data$GeneID)),
                 "total orthologs across", length(unique(plot_data$Species)), "species"
               ),
-              x = "Timepoint"
+              x = condition_label(current_study_design())
             ) +
             theme_minimal() +
             theme(
@@ -4952,7 +5089,7 @@ server <- function(input, output, session) {
             layout(
               title = "Multi-Species Gene Expression Heatmap",
               xaxis = list(
-                title = "Timepoint",
+                title = condition_label(current_study_design()),
                 tickangle = -45
               ),
               yaxis = list(
@@ -4964,7 +5101,8 @@ server <- function(input, output, session) {
               font = list(color = if (is_dark()) "white" else "black")
             )
         } else {
-          # for bar chart in multi-species mode - use species colors
+          # bar fill encodes species, the hatching through it encodes gene.
+          # built with plot_ly directly: ggplotly cannot carry pattern fills.
           settings_colors <- plot_settings$species_colors
 
           summary_data <- plot_data %>%
@@ -4972,37 +5110,57 @@ server <- function(input, output, session) {
             summarise(Mean = mean(Expression, na.rm = TRUE), .groups = "drop") %>%
             mutate(GeneSpecies = paste(Gene, Species, sep = " | "))
 
-          # build color map for gene-species combinations using species colors
-          unique_combos <- unique(summary_data$GeneSpecies)
-          combo_colors <- sapply(unique_combos, function(combo) {
+          axis_levels <- if (is.factor(summary_data$Timepoint)) {
+            levels(droplevels(summary_data$Timepoint))
+          } else {
+            unique(as.character(summary_data$Timepoint))
+          }
+
+          genes <- sort(unique(as.character(summary_data$Gene)))
+          gene_cols <- get_palette_colors(plot_settings$gene_palette %||% "Set2", max(length(genes), 3))
+          gene_cols <- setNames(gene_cols[seq_along(genes)], genes)
+          # solid marks the first gene, so a single-gene set carries no hatching
+          hatch <- c("", "/", "x", "-", "\\", "|", "+", ".")
+          gene_shapes <- setNames(hatch[((seq_along(genes) - 1) %% length(hatch)) + 1], genes)
+
+          bar_border <- if (is_dark()) "#2c3034" else "white"
+          p <- plot_ly()
+          for (combo in sort(unique(summary_data$GeneSpecies))) {
+            d <- summary_data[summary_data$GeneSpecies == combo, , drop = FALSE]
+            d <- d[order(match(as.character(d$Timepoint), axis_levels)), , drop = FALSE]
+            g <- sub(" \\| .*$", "", combo)
             sp <- sub("^.* \\| ", "", combo)
-            if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
-          })
-          names(combo_colors) <- unique_combos
-
-          p <- ggplot(summary_data, aes(x = Timepoint, y = Mean, fill = GeneSpecies)) +
-            geom_bar(stat = "identity", position = "dodge") +
-            scale_fill_manual(values = combo_colors) +
-            labs(
-              title = "Multi-Species Gene Set Expression",
-              y = "Mean log2 CPM",
-              x = "Timepoint",
-              fill = "Gene | Species"
-            ) +
-            theme_minimal() +
-            theme(
-              axis.text.x = element_text(angle = 45, hjust = 1),
-              plot.background = element_rect(fill = if (is_dark()) "#2c3034" else "white", color = NA),
-              panel.background = element_rect(fill = if (is_dark()) "#2c3034" else "white", color = NA),
-              text = element_text(color = if (is_dark()) "white" else "black"),
-              legend.background = element_rect(fill = if (is_dark()) "#2c3034" else "white")
+            sp_col <- if (sp %in% names(settings_colors)) settings_colors[[sp]] else "#808080"
+            p <- add_trace(p,
+              type = "bar", name = combo,
+              x = as.character(d$Timepoint), y = d$Mean,
+              marker = list(
+                color = sp_col,
+                line = list(color = bar_border, width = 0.5),
+                pattern = list(
+                  shape = unname(gene_shapes[[g]]), fgcolor = unname(gene_cols[[g]]),
+                  bgcolor = sp_col, size = 7, solidity = 0.35
+                )
+              ),
+              hovertemplate = paste0("<b>", combo, "</b><br>%{x}: %{y:.2f}<extra></extra>")
             )
+          }
 
-          ggplotly(p) %>%
-            layout(
-              plot_bgcolor = if (is_dark()) "#2c3034" else "white",
-              paper_bgcolor = if (is_dark()) "#2c3034" else "white"
-            )
+          p %>% layout(
+            barmode = "group",
+            bargap = 0.25,
+            title = list(text = "Multi-Species Gene Set Expression"),
+            xaxis = list(
+              title = condition_label(current_study_design()),
+              type = "category", categoryorder = "array", categoryarray = axis_levels,
+              tickangle = -45
+            ),
+            yaxis = list(title = paste("Mean", expression_axis_label())),
+            legend = list(title = list(text = "Gene | Species")),
+            plot_bgcolor = if (is_dark()) "#2c3034" else "white",
+            paper_bgcolor = if (is_dark()) "#2c3034" else "white",
+            font = list(color = if (is_dark()) "white" else "black")
+          )
         }
       } else {
         # Single Species Logic
@@ -5016,7 +5174,8 @@ server <- function(input, output, session) {
           alpha = params$alpha,
           selected_gene = params$selected_gene,
           selected_comparisons = params$selected_comparisons,
-          plot_settings = reactiveValuesToList(plot_settings)
+          plot_settings = reactiveValuesToList(plot_settings),
+          study_design = current_study_design()
         )
         if (isTRUE(params$viz_type == "line")) gv <- apply_y_axis_range(gv, plot_settings, base_rev = "gene_group_plot")
         gv
@@ -5129,11 +5288,9 @@ server <- function(input, output, session) {
     min_scale <- plot_settings$color_min
     max_scale <- plot_settings$color_max
 
-    color_fun <- if (!is.null(min_scale) && !is.null(max_scale)) {
-      circlize::colorRamp2(c(min_scale, 0, max_scale), c("blue", "white", "red"))
-    } else {
-      circlize::colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
-    }
+    # Sanitized range (always straddles 0) drives BOTH the colors and the legend
+    scale_rng <- heatmap_scale_range(min_scale, max_scale)
+    color_fun <- heatmap_diverging_palette(scale_rng[1], scale_rng[2])
 
     # Calculate shared timepoints for intersection mode
     allowed_timepoints <- NULL
@@ -5169,7 +5326,8 @@ server <- function(input, output, session) {
         transform_type = transform,
         time_axis_type = time_axis,
         allowed_timepoints = allowed_timepoints,
-        show_t0 = show_t0
+        show_t0 = show_t0,
+        study_design = current_study_design()
       )
 
       # Create Heatmap
@@ -5199,8 +5357,8 @@ server <- function(input, output, session) {
 
     # 5. Draw Grid
     # Create shared legend
-    min_val <- if (!is.null(min_scale)) min_scale else -2
-    max_val <- if (!is.null(max_scale)) max_scale else 2
+    min_val <- scale_rng[1]
+    max_val <- scale_rng[2]
 
     legend <- make_shared_legend(
       color_fun = color_fun,
@@ -5210,7 +5368,7 @@ server <- function(input, output, session) {
     )
 
     draw_2x2_heatmap(ht_list, legend = legend)
-  })
+  }, res = 130)
 
   observeEvent(input$export_group_plot_btn, {
     mode <- input$settings_viz_mode
@@ -5284,11 +5442,8 @@ server <- function(input, output, session) {
 
       min_scale <- plot_settings$color_min
       max_scale <- plot_settings$color_max
-      color_fun <- if (!is.null(min_scale) && !is.null(max_scale)) {
-        circlize::colorRamp2(c(min_scale, 0, max_scale), c("blue", "white", "red"))
-      } else {
-        circlize::colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
-      }
+      scale_rng <- heatmap_scale_range(min_scale, max_scale)
+      color_fun <- heatmap_diverging_palette(scale_rng[1], scale_rng[2])
 
       allowed_timepoints <- NULL
       if (time_axis == "intersection") {
@@ -5347,7 +5502,8 @@ server <- function(input, output, session) {
           transform_type = transform,
           time_axis_type = time_axis,
           allowed_timepoints = allowed_timepoints,
-          show_t0 = show_t0
+          show_t0 = show_t0,
+          study_design = current_study_design()
         )
 
         ht <- make_publication_heatmap(
@@ -5364,8 +5520,8 @@ server <- function(input, output, session) {
         ht_list[[length(ht_list) + 1]] <- ht
       }
 
-      min_val <- if (!is.null(min_scale)) min_scale else -2
-      max_val <- if (!is.null(max_scale)) max_scale else 2
+      min_val <- scale_rng[1]
+      max_val <- scale_rng[2]
       legend <- make_shared_legend(
         color_fun = color_fun,
         category_colors = pal,
@@ -5390,7 +5546,7 @@ server <- function(input, output, session) {
         mime = mime
       ))
     } else {
-      # Interactive mode — client-side plotly export
+      # Interactive mode: client-side plotly export
       session$sendCustomMessage("plotly_export", list(
         plotId = "gene_group_plot",
         format = fmt,
@@ -5426,7 +5582,7 @@ server <- function(input, output, session) {
         )
 
         if (input$pathway_value_type == "foldchange") {
-          pathway_results <- calculate_pathway_foldchange(pathway_results)
+          pathway_results <- calculate_pathway_foldchange(pathway_results, study_design = current_study_design())
         }
 
         write.csv(pathway_results, file, row.names = FALSE)
@@ -5481,16 +5637,271 @@ server <- function(input, output, session) {
       create_ridgeline_plot(
         species_data_list = rd$species_data_list,
         is_dark_mode = dark_mode,
-        plot_settings = current_settings
+        plot_settings = current_settings,
+        study_design = current_study_design()
       )
     } else {
       create_threshold_ridgeline(
         species_data_list = rd$species_data_list,
         threshold = rd$threshold,
         is_dark_mode = dark_mode,
-        plot_settings = current_settings
+        plot_settings = current_settings,
+        study_design = current_study_design()
       )
     }
+  })
+
+  # ==========================================
+  # Phylogenetic tree: aesthetic editor + export
+  # ==========================================
+
+  tree_aes <- do.call(reactiveValues, DEFAULT_TREE_AES)
+  tree_editor_rev <- reactiveVal(0)
+
+  # species shown in the current tree (falls back to the full config)
+  tree_species <- reactive({
+    config <- current_species_config()
+    qr <- global_query_state$query_result
+    codes <- if (!is.null(qr) && !is.null(qr$genes_by_species)) names(qr$genes_by_species) else names(config)
+    codes <- codes[codes %in% names(config)]
+    sh <- vapply(codes, function(cd) {
+      v <- config[[cd]]$short
+      if (is.null(v) || !nzchar(as.character(v)[1])) NA_character_ else as.character(v)[1]
+    }, character(1))
+    unname(sh[!is.na(sh)])
+  })
+
+  observeEvent(input$toggle_tree_editor, {
+    shinyjs::toggle("tree_aesthetic_editor")
+  })
+  observeEvent(input$close_tree_editor, {
+    shinyjs::hide("tree_aesthetic_editor")
+  })
+
+  output$tree_editor_ui <- renderUI({
+    tree_editor_rev()
+    species <- tree_species()
+    dark <- is_dark()
+    fg <- if (dark) "#FFFFFF" else "#000000"
+    bgd <- if (dark) "#2c3034" else "#FFFFFF"
+    a <- isolate(reactiveValuesToList(tree_aes))
+    colors <- isolate(species_colors_dynamic())
+
+    auto_title <- {
+      og <- isolate(global_query_state$query_result)$orthogroup
+      if (is.null(og)) "Phylogenetic Tree" else paste("Phylogenetic Tree for Orthogroup", og)
+    }
+    #seed label size with the size the tree is actually drawn at
+    n_tips <- length(isolate(global_query_state$tree_data)$tip.label)
+    dyn_tip_size <- if (n_tips > 20) 2.5 else if (n_tips > 10) 3.0 else 3.5
+
+    tagList(
+      tags$strong("Title"),
+      checkboxInput("tree_title_show", "Show title", value = isTRUE(a$title_show)),
+      textInput("tree_title_text", "Title text", value = a$title_text %||% auto_title),
+      fluidRow(
+        column(6, numericInput("tree_title_size", "Size", value = a$title_size, min = 6, max = 40)),
+        column(6, colourpicker::colourInput("tree_title_color", "Color",
+          value = a$title_color %||% fg, showColour = "background"))
+      ),
+      checkboxInput("tree_title_bold", "Bold", value = isTRUE(a$title_bold)),
+
+      tags$hr(), tags$strong("Tip labels"),
+      radioButtons("tree_tip_color_mode", "Color tips by:",
+        choices = c("Species" = "species", "Single color" = "single"),
+        selected = a$tip_color_mode, inline = TRUE
+      ),
+      conditionalPanel(
+        condition = "input.tree_tip_color_mode == 'single'",
+        colourpicker::colourInput("tree_tip_color", "Tip label color",
+          value = a$tip_color %||% fg, showColour = "background")
+      ),
+      fluidRow(
+        column(6, numericInput("tree_tip_size", "Label size",
+          value = a$tip_size %||% dyn_tip_size, min = 1, max = 12, step = 0.5)),
+        column(6, sliderInput("tree_label_space", "Label space",
+          min = 0.6, max = 2.5, value = a$label_space %||% 1, step = 0.05))
+      ),
+      checkboxInput("tree_tip_align", "Align labels", value = isTRUE(a$tip_align)),
+
+      conditionalPanel(
+        condition = "input.tree_tip_color_mode == 'species'",
+        tags$hr(), tags$strong("Species tip colors"),
+        helpText("App-wide species colors, shared with every other plot."),
+        div(lapply(species, function(sp) {
+          id_suffix <- gsub("[^a-zA-Z0-9]", "_", sp)
+          div(
+            style = "display: inline-block; margin: 4px; width: 150px; vertical-align: top;",
+            colourpicker::colourInput(
+              paste0("tree_species_color_", id_suffix),
+              label = sp,
+              value = resolve_species_color(sp, colors, "#808080"),
+              showColour = "background"
+            )
+          )
+        }))
+      ),
+
+      tags$hr(), tags$strong("Branches & nodes"),
+      fluidRow(
+        column(6, colourpicker::colourInput("tree_branch_color", "Branch color",
+          value = a$branch_color %||% fg, showColour = "background")),
+        column(6, sliderInput("tree_branch_width", "Branch width",
+          min = 0.1, max = 3, value = a$branch_width, step = 0.1))
+      ),
+      checkboxInput("tree_node_show", "Show node points", value = isTRUE(a$node_show)),
+      fluidRow(
+        column(6, colourpicker::colourInput("tree_node_color", "Node color",
+          value = a$node_color %||% (if (dark) "#666666" else "#999999"), showColour = "background")),
+        column(6, sliderInput("tree_node_size", "Node size",
+          min = 0, max = 8, value = a$node_size, step = 0.5))
+      ),
+
+      tags$hr(), tags$strong("Legend"),
+      checkboxInput("tree_legend_show", "Show legend", value = isTRUE(a$legend_show)),
+      fluidRow(
+        column(6, selectInput("tree_legend_position", "Position",
+          choices = c("Bottom" = "bottom", "Right" = "right", "Top" = "top", "Left" = "left"),
+          selected = a$legend_position)),
+        column(6, textInput("tree_legend_title", "Legend title", value = a$legend_title))
+      ),
+      fluidRow(
+        column(4, numericInput("tree_legend_title_size", "Title size", value = a$legend_title_size, min = 4, max = 30)),
+        column(4, numericInput("tree_legend_text_size", "Item size", value = a$legend_text_size, min = 4, max = 30)),
+        column(4, colourpicker::colourInput("tree_legend_text_color", "Text color",
+          value = a$legend_text_color %||% fg, showColour = "background"))
+      ),
+
+      tags$hr(), tags$strong("Background"),
+      colourpicker::colourInput("tree_bg_color", "Plot background",
+        value = a$bg_color %||% bgd, showColour = "background"),
+
+      tags$hr(),
+      actionButton("export_phylo_tree_btn2", "Export tree", icon = icon("download"),
+        class = "btn-primary w-100 mb-2"),
+      actionButton("tree_editor_reset", "Reset to defaults", icon = icon("undo"),
+        class = "btn-outline-danger w-100")
+    )
+  })
+
+  # control id -> tree_aes field
+  tree_editor_bindings <- list(
+    tree_title_show = "title_show", tree_title_text = "title_text",
+    tree_title_size = "title_size", tree_title_color = "title_color",
+    tree_title_bold = "title_bold",
+    tree_tip_color_mode = "tip_color_mode", tree_tip_color = "tip_color",
+    tree_tip_size = "tip_size", tree_tip_align = "tip_align",
+    tree_label_space = "label_space",
+    tree_branch_color = "branch_color", tree_branch_width = "branch_width",
+    tree_node_show = "node_show", tree_node_color = "node_color",
+    tree_node_size = "node_size",
+    tree_legend_show = "legend_show", tree_legend_position = "legend_position",
+    tree_legend_title = "legend_title", tree_legend_title_size = "legend_title_size",
+    tree_legend_text_size = "legend_text_size", tree_legend_text_color = "legend_text_color",
+    tree_bg_color = "bg_color"
+  )
+
+  for (ctrl_id in names(tree_editor_bindings)) {
+    local({
+      id <- ctrl_id
+      field <- tree_editor_bindings[[ctrl_id]]
+      observeEvent(input[[id]], {
+        val <- input[[id]]
+        if (is.null(val)) return()
+        if (is.numeric(val) && any(is.na(val))) return()
+        tree_aes[[field]] <- val
+      }, ignoreInit = TRUE)
+    })
+  }
+
+  #tip colors write to the shared species colors; plain env + observeEvent, never observe()
+  tree_color_obs <- new.env(parent = emptyenv())
+  tree_color_obs$observers <- list()
+  observeEvent(list(current_species_config(), tree_species()), {
+    config <- current_species_config()
+    species <- tree_species()
+    lapply(tree_color_obs$observers, function(o) o$destroy())
+    tree_color_obs$observers <- lapply(species, function(sp) {
+      id <- paste0("tree_species_color_", gsub("[^a-zA-Z0-9]", "_", sp))
+      sp_full <- NULL
+      hit <- Filter(function(cd) identical(config[[cd]]$short, sp), names(config))
+      if (length(hit) > 0) sp_full <- config[[hit[[1]]]]$name
+      observeEvent(input[[id]], {
+        val <- input[[id]]
+        if (is.null(val) || val == "" || isTRUE(plot_settings$updating_colors_from_palette)) return()
+        plot_settings$species_colors[[sp]] <- val
+        if (!is.null(sp_full)) plot_settings$species_colors[[sp_full]] <- val
+        #sync the Plot Settings picker
+        id_suffix <- gsub("[^a-zA-Z0-9]", "_", sp)
+        colourpicker::updateColourInput(session, paste0("species_color_", id_suffix), value = val)
+        updateTextInput(session, paste0("species_color_hex_", id_suffix), value = val)
+      }, ignoreInit = TRUE, ignoreNULL = TRUE)
+    })
+  })
+
+  observeEvent(input$tree_editor_reset, {
+    for (nm in names(DEFAULT_TREE_AES)) tree_aes[[nm]] <- DEFAULT_TREE_AES[[nm]]
+    tree_editor_rev(tree_editor_rev() + 1)
+  })
+
+  # export the tree as currently styled
+  observeEvent(input$export_phylo_tree_btn, {
+    show_tree_export_modal()
+  })
+  observeEvent(input$export_phylo_tree_btn2, {
+    show_tree_export_modal()
+  })
+
+  show_tree_export_modal <- function() {
+    tree <- global_query_state$tree_data
+    if (is.null(tree)) {
+      showNotification("No phylogenetic tree to export. Search for a gene with an orthogroup first.",
+                       type = "warning")
+      return()
+    }
+    n_tips <- length(tree$tip.label)
+    show_plot_export_modal("download_phylo_tree", "Export Phylogenetic Tree",
+      default_width = 10, default_height = max(6, min(16, round(n_tips * 0.35))))
+  }
+
+  observeEvent(input$download_phylo_tree_confirm, {
+    tree <- global_query_state$tree_data
+    qr <- global_query_state$query_result
+    req(tree, qr)
+
+    num_or <- function(x, default) {
+      x <- suppressWarnings(as.numeric(x))
+      if (length(x) != 1 || !is.finite(x) || x <= 0) default else x
+    }
+    fmt <- input$download_phylo_tree_format %||% "png"
+    w <- num_or(input$download_phylo_tree_width, 10)
+    h <- num_or(input$download_phylo_tree_height, 8)
+    dpi_val <- num_or(input$download_phylo_tree_dpi, 300)
+
+    p <- create_phylo_tree_plot(
+      tree, qr$genes_by_species, qr$orthogroup, is_dark(),
+      get_all_species_data(), species_colors_dynamic(), current_species_config(),
+      aes_opts = reactiveValuesToList(tree_aes)
+    )
+    req(!is.null(p))
+
+    tmp <- tempfile(fileext = paste0(".", fmt))
+    ggsave(tmp, p, device = fmt, width = w, height = h, dpi = dpi_val,
+           bg = tree_aes$bg_color %||% (if (is_dark()) "#2c3034" else "white"))
+
+    raw <- readBin(tmp, "raw", file.size(tmp))
+    mime <- switch(fmt,
+      png = "image/png", jpeg = "image/jpeg",
+      pdf = "application/pdf", svg = "image/svg+xml",
+      "application/octet-stream"
+    )
+    session$sendCustomMessage("download_base64", list(
+      data = jsonlite::base64_enc(raw),
+      filename = paste0("phylo_tree_", qr$orthogroup %||% "orthogroup", "_",
+                        format(Sys.time(), "%Y%m%d_%H%M%S"), ".", fmt),
+      mime = mime
+    ))
+    removeModal()
   })
 
   # global search observer
@@ -5509,6 +5920,8 @@ server <- function(input, output, session) {
     # Store in global state
     global_query_state$current_query <- query
     global_query_state$last_search_time <- Sys.time()
+    #a custom title names an orthogroup, so drop it on a new search
+    tree_aes$title_text <- NULL
 
     # Search across all species
     query_result <- NULL
@@ -5535,6 +5948,8 @@ server <- function(input, output, session) {
 
       is_orphan <- !is.null(query_result$source) && query_result$source == "gene_lookup_no_orthogroup"
       is_synteny <- !is.null(query_result$source) && query_result$source == "synteny_aided"
+
+      global_query_state$last_status <- if (is_orphan) "orphan" else if (is_synteny) "synteny" else "ok"
 
       output$query_status <- renderUI({
         if (is_orphan) {
@@ -5632,7 +6047,9 @@ server <- function(input, output, session) {
         output$phylo_tree_plot <- renderPlot(
           {
             if (!is.null(tree)) {
-              create_phylo_tree_plot(tree, query_result$genes_by_species, query_result$orthogroup, is_dark(), current_data, species_colors_dynamic(), config)
+              create_phylo_tree_plot(tree, query_result$genes_by_species, query_result$orthogroup,
+                is_dark(), current_data, species_colors_dynamic(), config,
+                aes_opts = reactiveValuesToList(tree_aes))
             } else {
               plot.new()
               text(0.5, 0.5, "Phylogenetic tree not available for this orthogroup",
@@ -5640,7 +6057,7 @@ server <- function(input, output, session) {
               )
             }
           },
-          bg = if (is_dark()) "#2c3034" else "white",
+          bg = tree_aes$bg_color %||% (if (is_dark()) "#2c3034" else "white"),
           res = 120
         )
       }
@@ -5715,6 +6132,11 @@ server <- function(input, output, session) {
       })
     } else {
       # Not found
+      global_query_state$last_status <- "not_found"
+      #drop the previous hit too, or the results row stays hidden with nothing
+      #in its place and the tab reads as blank
+      global_query_state$query_result <- NULL
+      global_query_state$tree_data <- NULL
       shinyjs::hide("gene_explorer_results")
       shinyjs::show("query_status_container")
 
@@ -5945,14 +6367,16 @@ server <- function(input, output, session) {
       create_ridgeline_plot(
         species_data_list = species_data_list,
         is_dark_mode = is_dark(),
-        plot_settings = reactiveValuesToList(plot_settings)
+        plot_settings = reactiveValuesToList(plot_settings),
+        study_design = current_study_design()
       )
     } else {
       create_threshold_ridgeline(
         species_data_list = species_data_list,
         threshold = input$expression_threshold,
         is_dark_mode = is_dark(),
-        plot_settings = reactiveValuesToList(plot_settings)
+        plot_settings = reactiveValuesToList(plot_settings),
+        study_design = current_study_design()
       )
     }
 
@@ -6076,14 +6500,33 @@ server <- function(input, output, session) {
       return(list(valid = FALSE, errors = errors, warnings = warnings))
     }
 
-    # Check required columns
-    required_cols <- c("Sample", "Timepoint", "Replicate")
-    missing_cols <- setdiff(required_cols, colnames(sample_data))
+    # Sample is the only fixed column; the condition axis is whatever the user
+    # named it and is declared later in the Design wizard
+    missing_cols <- setdiff("Sample", colnames(sample_data))
 
     if (length(missing_cols) > 0) {
       errors <- c(errors, paste(
         species_name, ": Missing required columns:",
         paste(missing_cols, collapse = ", ")
+      ))
+    }
+
+    candidate_cols <- setdiff(colnames(sample_data), c("Sample", "Replicate"))
+    if (length(candidate_cols) == 0) {
+      errors <- c(errors, paste(
+        species_name,
+        ": No condition column found. Add a column describing each sample (Timepoint, Dose, Genotype, ...)."
+      ))
+    }
+    if (!"Replicate" %in% colnames(sample_data)) {
+      warnings <- c(warnings, paste(
+        species_name, ": No Replicate column; samples are treated as unreplicated."
+      ))
+    }
+    if (length(candidate_cols) > 0) {
+      warnings <- c(warnings, paste0(
+        species_name, ": condition column candidates - ",
+        paste(candidate_cols, collapse = ", "), ". Choose one in Step 6."
       ))
     }
 
@@ -6113,9 +6556,12 @@ server <- function(input, output, session) {
       return(list(valid = TRUE, errors = errors, warnings = warnings))
     }
 
-    # Check required columns
-    required_cols <- c("GeneID", "GeneName", "Chr")
-    missing_cols <- setdiff(required_cols, colnames(anno_data))
+    # GeneID is the only column the app needs; GeneName aids search
+    if (!"GeneName" %in% colnames(anno_data)) {
+      warnings <- c(warnings, paste0(
+        species_name, ": annotation has no GeneName column; genes will only be searchable by ID."))
+    }
+    missing_cols <- setdiff("GeneID", colnames(anno_data))
 
     if (length(missing_cols) > 0) {
       errors <- c(errors, paste(
@@ -6148,41 +6594,90 @@ server <- function(input, output, session) {
         next
       }
 
-      for (i in seq_along(gene_ids)) {
-        # Create single entry per gene with both ID and name
-        entry <- data.frame(
-          gene_id = gene_ids[i],
-          species = species_id,
-          expression_id = gene_ids[i],
-          id_type = paste0(toupper(species_id), "GL0"),
-          source_info = "original",
-          gene_name = if (length(gene_names) >= i && !is.na(gene_names[i])) gene_names[i] else "",
-          hog_id = "",
-          og_id = "",
-          stringsAsFactors = FALSE
-        )
-        lookup_entries[[length(lookup_entries) + 1]] <- entry
-      }
+      # one frame per species, not one per gene: a real genome is ~10^4-10^5 rows
+      gene_names <- as.character(gene_names)[seq_along(gene_ids)]
+      gene_names[is.na(gene_names)] <- ""
+      lookup_entries[[species_id]] <- data.frame(
+        gene_id = gene_ids,
+        species = species_id,
+        expression_id = gene_ids,
+        id_type = paste0(toupper(species_id), "GL0"),
+        source_info = "original",
+        gene_name = gene_names,
+        hog_id = "",
+        og_id = "",
+        stringsAsFactors = FALSE
+      )
     }
 
     lookup_table <- as.data.frame(rbindlist(lookup_entries, fill = TRUE))
 
     # Add orthology information if provided
     if (!is.null(ortho_data) && "gene_id" %in% colnames(ortho_data)) {
-      for (i in 1:nrow(lookup_table)) {
-        gene_match <- which(ortho_data$gene_id == lookup_table$gene_id[i])
-        if (length(gene_match) > 0) {
-          if ("hog_id" %in% colnames(ortho_data)) {
-            lookup_table$hog_id[i] <- ortho_data$hog_id[gene_match[1]]
-          }
-          if ("og_id" %in% colnames(ortho_data)) {
-            lookup_table$og_id[i] <- ortho_data$og_id[gene_match[1]]
-          }
+      # single vectorized match; the old per-gene which() was O(genes x ortho rows)
+      idx <- match(lookup_table$gene_id, ortho_data$gene_id)
+      hit <- !is.na(idx)
+      if (any(hit)) {
+        if ("hog_id" %in% colnames(ortho_data)) {
+          lookup_table$hog_id[hit] <- as.character(ortho_data$hog_id[idx[hit]])
+        }
+        if ("og_id" %in% colnames(ortho_data)) {
+          lookup_table$og_id[hit] <- as.character(ortho_data$og_id[idx[hit]])
         }
       }
     }
 
     return(as.data.table(lookup_table))
+  }
+
+  #Gene trees for the Gene Explorer. Accepts an OrthoFinder Gene_Trees zip, loose
+  #newick files, or a two-column table of orthogroup + newick. Produces the same
+  #shape load_gene_tree() reads: trees[["<OG>_tree.txt"]]$newick
+  parse_gene_trees_upload <- function(files) {
+    if (is.null(files) || nrow(files) == 0) return(NULL)
+    trees <- list()
+
+    add_tree <- function(og, nwk) {
+      og <- trimws(as.character(og)); nwk <- trimws(as.character(nwk))
+      if (!nzchar(og) || !nzchar(nwk) || !grepl(";", nwk, fixed = TRUE)) return(invisible(NULL))
+      og <- sub("_tree(\\.txt)?$", "", og)
+      n_tips <- tryCatch(length(ape::read.tree(text = nwk)$tip.label),
+                         error = function(e) NA_integer_)
+      if (is.na(n_tips)) return(invisible(NULL))
+      trees[[paste0(og, "_tree.txt")]] <<- list(newick = nwk, n_tips = n_tips)
+    }
+
+    read_newick_file <- function(path, name) {
+      txt <- paste(readLines(path, warn = FALSE), collapse = "")
+      add_tree(tools::file_path_sans_ext(basename(name)), txt)
+    }
+
+    for (i in seq_len(nrow(files))) {
+      path <- files$datapath[i]
+      name <- files$name[i]
+      ext <- tolower(tools::file_ext(name))
+
+      if (ext == "zip") {
+        exdir <- file.path(tempdir(), paste0("trees_", i))
+        unlink(exdir, recursive = TRUE); dir.create(exdir, showWarnings = FALSE)
+        inner <- tryCatch({ utils::unzip(path, exdir = exdir); list.files(exdir, recursive = TRUE, full.names = TRUE) },
+                          error = function(e) character(0))
+        for (f in inner) {
+          if (tolower(tools::file_ext(f)) %in% c("txt", "nwk", "newick", "tree", "tre")) {
+            read_newick_file(f, basename(f))
+          }
+        }
+      } else if (ext %in% c("tsv", "csv")) {
+        tbl <- tryCatch(read_data_file(path, "Gene trees"), error = function(e) NULL)
+        if (!is.null(tbl) && ncol(tbl) >= 2) {
+          for (r in seq_len(nrow(tbl))) add_tree(tbl[r, 1], tbl[r, 2])
+        }
+      } else {
+        read_newick_file(path, name)
+      }
+    }
+
+    if (length(trees) == 0) NULL else list(trees = trees)
   }
 
   # Process OrthoFinder output
@@ -6381,6 +6876,9 @@ server <- function(input, output, session) {
             }
           }
 
+          # an upload has no provenance, so label it from its own values
+          attr(expr_matrix, "expr_label") <- detected_expression_label(expr_matrix)
+
           # Store with CONSISTENT naming (no prefixes in main structure)
           upload_state$uploaded_data[[species_id]] <- list(
             lcpm = expr_matrix,
@@ -6413,15 +6911,46 @@ server <- function(input, output, session) {
       upload_state$uploaded_data$orthofinder <- list(orthogroups = ortho_data)
     }
 
+    # Gene trees (optional): powers the Gene Explorer tree for uploaded data
+    if (!is.null(input$upload_gene_trees)) {
+      pt <- parse_gene_trees_upload(input$upload_gene_trees)
+      upload_state$uploaded_data$phylo_trees <- pt
+      if (is.null(pt)) {
+        upload_state$validation_warnings <- c(
+          upload_state$validation_warnings,
+          "Gene trees: no readable newick strings found; the tree panel will stay empty."
+        )
+      } else {
+        og_ids <- sub("_tree\\.txt$", "", names(pt$trees))
+        known <- if (!is.null(upload_state$uploaded_data$orthofinder$orthogroups$og_id)) {
+          unique(upload_state$uploaded_data$orthofinder$orthogroups$og_id)
+        } else NULL
+        matched <- if (is.null(known)) NA_integer_ else sum(og_ids %in% known)
+        upload_state$validation_warnings <- c(
+          upload_state$validation_warnings,
+          sprintf("Gene trees: %d parsed%s.", length(og_ids),
+                  if (is.na(matched)) "" else sprintf(", %d matching an uploaded orthogroup", matched))
+        )
+      }
+    }
+
     # Update validation status
     upload_state$validated <- length(upload_state$validation_errors) == 0
 
     # Enable process button if validated
     if (upload_state$validated) {
       shinyjs::enable("process_uploads")
-      showNotification("Validation successful! You can now process the data.",
-        type = "message", duration = 5
-      )
+      #the design is the next thing they must do, so send them there
+      if (is.null(upload_state$study_design)) {
+        updateTabsetPanel(session, "upload_preview_tabs", selected = "design")
+        showNotification("Validation successful. Next: describe your design (Step 6).",
+          type = "message", duration = 8
+        )
+      } else {
+        showNotification("Validation successful! You can now process the data.",
+          type = "message", duration = 5
+        )
+      }
     } else {
       shinyjs::disable("process_uploads")
       showNotification("Validation failed. Please fix the errors and try again.",
@@ -6440,6 +6969,20 @@ server <- function(input, output, session) {
 
     tryCatch(
       {
+        # fall back to an inferred design rather than the stock time course
+        if (is.null(upload_state$study_design)) {
+          inferred <- infer_study_design_from_uploads()
+          if (!is.null(inferred)) {
+            upload_state$study_design <- inferred
+            upload_state$design_inferred <- TRUE
+            showNotification(
+              sprintf("No design applied, so one was inferred: %s (%s, %d levels).",
+                      condition_label(inferred), condition_type(inferred),
+                      length(condition_levels(inferred))),
+              type = "warning", duration = 10)
+          }
+        }
+
         # Build gene lookup table
         ortho_data_for_lookup <- if (!is.null(upload_state$uploaded_data$orthofinder)) {
           upload_state$uploaded_data$orthofinder$orthogroups
@@ -6478,7 +7021,7 @@ server <- function(input, output, session) {
         rm(list = ls(species_data_cache), envir = species_data_cache)
 
         showNotification("Data processed successfully! The app is now using your uploaded data.",
-          type = "success", duration = 5
+          type = "message", duration = 5
         )
 
         # Show success banner
@@ -6516,6 +7059,8 @@ server <- function(input, output, session) {
     upload_state$custom_all_species_data <- NULL
     upload_state$processed <- FALSE
     upload_state$validated <- FALSE
+    upload_state$study_design <- NULL
+    upload_state$design_inferred <- FALSE
 
     # Clear species data cache
     rm(list = ls(species_data_cache), envir = species_data_cache)
@@ -6523,7 +7068,7 @@ server <- function(input, output, session) {
     shinyjs::hide("upload_status_banner")
     shinyjs::disable("process_uploads")
 
-    showNotification("Reset to demo data successful!", type = "success", duration = 3)
+    showNotification("Reset to demo data successful!", type = "message", duration = 3)
   })
 
   # Dismiss banner
@@ -6600,6 +7145,115 @@ server <- function(input, output, session) {
           ))
         }
       }
+    }
+  })
+
+  #study-design wizard: combine per-species sample_info into one table with a
+  #Species column so orthology members come from the uploaded species.
+  #safety net: without this, processing an upload with no design applied would
+  #silently fall back to the stock GRE time levels and blank every plot
+  infer_study_design_from_uploads <- function() {
+    sp_ids <- setdiff(names(upload_state$uploaded_data),
+                      c("orthofinder", "metadata", "gene_lookup", "phylo_trees"))
+    frames <- Filter(Negate(is.null), lapply(sp_ids, function(sp) {
+      upload_state$uploaded_data[[sp]]$sample_info
+    }))
+    if (length(frames) == 0) return(NULL)
+
+    #the axis is any column every species carries besides Sample/Replicate
+    cand <- Reduce(intersect, lapply(frames, function(f) {
+      setdiff(names(f), c("Sample", "Replicate"))
+    }))
+    if (length(cand) == 0) return(NULL)
+    axis <- cand[1]
+
+    seen <- unique(unlist(lapply(frames, function(f) as.character(f[[axis]]))))
+    seen <- seen[!is.na(seen) & nzchar(seen)]
+    if (length(seen) == 0) return(NULL)
+
+    vals <- infer_numeric_progression(seen)
+    if (!is.null(vals)) {
+      ord <- order(vals); lv <- seen[ord]; vv <- vals[ord]; ctype <- "interval"
+    } else {
+      lv <- seen; vv <- NULL; ctype <- "nominal"
+    }
+    multi <- length(sp_ids) > 1
+
+    tryCatch(make_study_design(
+      id = "uploaded_inferred",
+      align = if (multi) "orthology" else "identity",
+      members = sp_ids,
+      comparison_label = if (multi) "Species" else "Group",
+      condition_column = axis, condition_type = ctype,
+      condition_levels = lv, condition_values = vv,
+      condition_reference = lv[1], condition_label = axis,
+      genome_col = "Species", replicate = "Replicate"
+    ), error = function(e) NULL)
+  }
+
+  #what the app will actually use, shown next to the Process button
+  output$design_status <- renderUI({
+    sd <- upload_state$study_design
+    if (is.null(sd)) {
+      guess <- infer_study_design_from_uploads()
+      if (is.null(guess)) {
+        return(div(class = "alert alert-secondary py-2 mb-2",
+                   icon("circle-info"), " Upload sample metadata, then describe your design."))
+      }
+      return(div(class = "alert alert-warning py-2 mb-2",
+        icon("triangle-exclamation"), strong(" No design applied yet."), br(),
+        sprintf("Processing now would assume: %s (%s, %d levels, baseline %s).",
+                condition_label(guess), condition_type(guess),
+                length(condition_levels(guess)), condition_reference(guess)),
+        br(), tags$small("Open the Design tab to confirm or change it.")))
+    }
+    div(class = if (isTRUE(upload_state$design_inferred)) "alert alert-warning py-2 mb-2"
+                else "alert alert-success py-2 mb-2",
+      icon(if (isTRUE(upload_state$design_inferred)) "wand-magic-sparkles" else "check"),
+      strong(if (isTRUE(upload_state$design_inferred)) " Design inferred." else " Design applied."),
+      br(),
+      sprintf("%s: %s, %d levels, baseline %s.",
+              condition_label(sd), condition_type(sd),
+              length(condition_levels(sd)), condition_reference(sd) %||% "none"))
+  })
+
+  wizard_sample_data <- reactive({
+    sp_ids <- setdiff(names(upload_state$uploaded_data),
+                      c("orthofinder", "metadata", "gene_lookup", "phylo_trees"))
+    frames <- lapply(sp_ids, function(sp) {
+      si <- upload_state$uploaded_data[[sp]]$sample_info
+      if (is.null(si)) return(NULL)
+      si$Species <- sp
+      si
+    })
+    frames <- frames[!vapply(frames, is.null, logical(1))]
+    req(length(frames) > 0)
+    dplyr::bind_rows(frames)
+  })
+
+  observeEvent(input$goto_design_tab, {
+    updateTabsetPanel(session, "upload_preview_tabs", selected = "design")
+  })
+
+  output$design_wizard_ui <- renderUI({ studyDesignWizardUI("design_wizard") })
+  outputOptions(output, "design_wizard_ui", suspendWhenHidden = FALSE)
+  wizard_design <- studyDesignWizardServer("design_wizard", sample_data = wizard_sample_data)
+
+  observeEvent(input$apply_design, {
+    res <- wizard_design()
+    if (isTRUE(res$ok)) {
+      upload_state$study_design <- res$design
+      upload_state$design_inferred <- FALSE
+      output$design_review <- renderUI({
+        div(class = "alert alert-success mt-2",
+          strong("Design applied."), br(),
+          HTML(paste(describe_study_design(res$design), collapse = "<br>")))
+      })
+      showNotification("Study design applied.", type = "message", duration = 4)
+    } else {
+      output$design_review <- renderUI({
+        div(class = "alert alert-warning mt-2", strong("Not ready: "), res$error)
+      })
     }
   })
 
@@ -6703,39 +7357,46 @@ server <- function(input, output, session) {
         all_data <- get_all_species_data()
         all_results_table <- list()
         all_plot_data <- list()
-        
+        raw_by_target <- list() #per-target res (incl null_cors) for the ggprism export
+
         for (tgt in input$similarity_tgt_species) {
           incProgress(1/length(input$similarity_tgt_species), detail = paste("Processing", tgt))
-          
+
           res <- run_similarity_search(
             query_gene_name = query_gene,
             ref_species = input$similarity_ref_species,
             tgt_species = tgt,
             top_x = input$similarity_top_matches[2],
-            all_species_data = all_data
+            all_species_data = all_data,
+            study_design = current_study_design()
           )
-          
+
           res$table$Target <- tgt
           res$plot_data$target_species <- ifelse(res$plot_data$type == "match", tgt, input$similarity_ref_species)
-          
+
+          raw_by_target[[tgt]] <- res
           all_results_table[[tgt]] <- res$table
-          all_plot_data[[tgt]] <- res$plot_data %>% filter(type == "match")
+          all_plot_data[[tgt]] <- res$plot_data %>% dplyr::filter(type == "match")
           
           # Save the first target's query trajectory for the plot overlay
           if (tgt == input$similarity_tgt_species[1]) {
-            query_plot_data <- res$plot_data %>% filter(type == "query")
+            query_plot_data <- res$plot_data %>% dplyr::filter(type == "query")
           }
         }
-        
-        combined_table <- bind_rows(all_results_table) %>% arrange(desc(pearson_r))
-        combined_plot_data <- bind_rows(query_plot_data, bind_rows(all_plot_data))
+
+        combined_table <- dplyr::bind_rows(all_results_table) %>% dplyr::arrange(dplyr::desc(pearson_r))
+        combined_plot_data <- dplyr::bind_rows(query_plot_data, dplyr::bind_rows(all_plot_data))
         
         # Ensure Timepoint is a factor with proper chronological order and sort the data so lines connect correctly
-        combined_plot_data$Timepoint <- factor(combined_plot_data$Timepoint, levels = TIME_POINTS)
-        combined_plot_data <- combined_plot_data %>% arrange(gene_id, Timepoint)        
+        combined_plot_data$Timepoint <- factor(combined_plot_data$Timepoint, levels = condition_levels(current_study_design()))
+        combined_plot_data <- combined_plot_data %>% dplyr::arrange(gene_id, Timepoint)
         similarity_results(list(
           table = combined_table,
-          plot_data = combined_plot_data
+          plot_data = combined_plot_data,
+          raw = raw_by_target,
+          query_gene = query_gene,
+          ref_species = input$similarity_ref_species,
+          top_n = input$similarity_top_matches[1]
         ))
       }, error = function(e) {
         showNotification(paste("Search failed:", e$message), type = "error")
@@ -6752,11 +7413,11 @@ server <- function(input, output, session) {
     plot_data <- similarity_results()$plot_data
     
     # Filter the matches for the graph based on the top N gene IDs PER SPECIES
-    top_genes <- similarity_results()$table %>% group_by(Target) %>% slice_head(n = input$similarity_top_matches[1]) %>% pull(gene_id)
-    
-    matches <- plot_data %>% 
-      filter(type == "match", gene_id %in% top_genes) %>%
-      mutate(plot_label = label)
+    top_genes <- similarity_results()$table %>% dplyr::group_by(Target) %>% dplyr::slice_head(n = input$similarity_top_matches[1]) %>% dplyr::pull(gene_id)
+
+    matches <- plot_data %>%
+      dplyr::filter(type == "match", gene_id %in% top_genes) %>%
+      dplyr::mutate(plot_label = label)
     
     p <- plot_ly()
     
@@ -6814,8 +7475,8 @@ server <- function(input, output, session) {
       }
 
       p <- matches %>%
-        group_by(plot_label) %>%
-        plot_ly(x = ~Timepoint, y = ~consensus_z, 
+        dplyr::group_by(plot_label) %>%
+        plot_ly(x = ~Timepoint, y = ~consensus_z,
                 color = ~plot_label, colors = color_map,
                 linetype = ~plot_label, linetypes = linetype_map,
                 symbol = ~plot_label, symbols = symbol_map,
@@ -6825,7 +7486,7 @@ server <- function(input, output, session) {
                 opacity = current_settings$similarity_opacity %||% 0.6)
     }
     
-    query_data <- plot_data %>% filter(type == "query")
+    query_data <- plot_data %>% dplyr::filter(type == "query")
     if (nrow(query_data) > 0) {
       p <- p %>% add_trace(data = query_data, x = ~Timepoint, y = ~consensus_z,
                      type = 'scatter', mode = 'lines+markers',
@@ -6836,21 +7497,106 @@ server <- function(input, output, session) {
                      opacity = 1)
     }
                    
+    #emulate ggprism theme_prism: thick black axis bars, outside ticks, no grid, bold
+    prism_axis <- function(title_text, extra = list()) {
+      c(list(
+        title = list(text = title_text, font = list(size = 16, color = "black")),
+        showline = TRUE, linecolor = "black", linewidth = 3,
+        ticks = "outside", tickcolor = "black", tickwidth = 2, ticklen = 6,
+        showgrid = FALSE, zeroline = FALSE,
+        tickfont = list(size = 13, color = "black")
+      ), extra)
+    }
     p <- p %>% layout(
-      title = "Temporal Profile Similarity Overlay",
-      xaxis = list(title = "Timepoint", categoryorder = "array", categoryarray = TIME_POINTS),
-      yaxis = list(title = "Consensus Z-Score"),
-      hovermode = "closest"
+      title = list(text = "Temporal Profile Similarity Overlay", font = list(size = 18, color = "black")),
+      xaxis = prism_axis(condition_label(current_study_design()), list(categoryorder = "array",
+                         categoryarray = condition_levels(current_study_design()))),
+      yaxis = prism_axis("Consensus Z-Score"),
+      plot_bgcolor = "white", paper_bgcolor = "white",
+      showlegend = TRUE,
+      legend = list(title = list(text = "Gene", font = list(size = 13, color = "black")),
+                    font = list(size = 12, color = "black")),
+      margin = list(r = 220),
+      hovermode = "closest",
+      uirevision = "similarity_plot"
     )
-    
-    p
+
+    #replay prior edits; isolated so reading them cannot re-render this plot
+    saved <- isolate(rv_plot_aesthetics$plot_styles[["similarity_plot"]])
+    saved_json <- if (length(saved) > 0) jsonlite::toJSON(saved, auto_unbox = TRUE) else "{}"
+    p %>% htmlwidgets::onRender(paste0("
+      function(el, x) {
+        if (typeof window.initInteractiveEditor === 'function') {
+          window.initInteractiveEditor(el);
+        }
+        if (typeof window.applyEditorStyleState === 'function') {
+          window.applyEditorStyleState(el, ", saved_json, ");
+        }
+      }
+    "))
+  })
+
+  #aesthetic editor state for the interactive similarity plot
+  similarity_editor_styles <- reactive({
+    rv_plot_aesthetics$plot_styles[["similarity_plot"]]
+  })
+
+  #static ggprism two-panel for the first target species, carrying the editor's edits
+  output$similarity_prism_plot <- renderPlot({
+    req(similarity_results()$raw)
+    top_n <- similarity_results()$top_n %||% 5
+    similarity_twopanel_prism(similarity_results(), top_n = top_n,
+                              styles = similarity_editor_styles())
+  }, res = 96)
+
+  #export the trajectory and null-distribution panels separately, each with
+  #DPI/width/height + PNG/SVG (same modal convention as the other modules)
+  observeEvent(input$export_similarity_trajectory_btn, {
+    show_plot_export_modal("download_sim_trajectory", "Export Trajectory",
+      default_width = 12, default_height = 6, formats = c("PNG" = "png", "SVG" = "svg"))
+  })
+  observeEvent(input$export_similarity_null_btn, {
+    show_plot_export_modal("download_sim_null", "Export Null Distribution",
+      default_width = 12, default_height = 5, formats = c("PNG" = "png", "SVG" = "svg"))
+  })
+
+  deliver_similarity_panel <- function(prefix, plot_obj, name) {
+    fmt <- input[[paste0(prefix, "_format")]] %||% "png"
+    w   <- input[[paste0(prefix, "_width")]]  %||% 12
+    h   <- input[[paste0(prefix, "_height")]] %||% 6
+    dpi <- input[[paste0(prefix, "_dpi")]]    %||% 300
+    tmp <- tempfile(fileext = paste0(".", fmt))
+    ggplot2::ggsave(tmp, plot_obj, device = fmt, width = w, height = h, dpi = dpi, bg = "white")
+    raw <- readBin(tmp, "raw", file.size(tmp))
+    mime <- switch(fmt, png = "image/png", svg = "image/svg+xml", "application/octet-stream")
+    session$sendCustomMessage("download_base64", list(
+      data = jsonlite::base64_enc(raw),
+      filename = sprintf("%s_%s.%s", name, Sys.Date(), fmt),
+      mime = mime))
+    removeModal()
+  }
+
+  observeEvent(input$download_sim_trajectory_confirm, {
+    sr <- similarity_results(); req(sr$raw)
+    tgt <- names(sr$raw)[1]; top_n <- sr$top_n %||% 5
+    p <- similarity_trajectory_prism(sr$raw[[tgt]], sr$query_gene, sr$ref_species, tgt, top_n,
+                                     styles = similarity_editor_styles())
+    deliver_similarity_panel("download_sim_trajectory", p,
+      sprintf("trajectory_%s_%s_vs_%s", sr$query_gene, sr$ref_species, tgt))
+  })
+  observeEvent(input$download_sim_null_confirm, {
+    sr <- similarity_results(); req(sr$raw)
+    tgt <- names(sr$raw)[1]; top_n <- sr$top_n %||% 5
+    p <- similarity_null_prism(sr$raw[[tgt]], tgt, top_n, styles = similarity_editor_styles())
+    deliver_similarity_panel("download_sim_null", p,
+      sprintf("nulldist_%s_%s_vs_%s", sr$query_gene, sr$ref_species, tgt))
   })
   
   output$similarity_table <- renderDT({
     req(similarity_results())
     
     dt <- datatable(
-      similarity_results()$table %>% select(Target, gene_id, gene_name, pearson_r, null_percentile, perm_p_value),
+      similarity_results()$table %>% dplyr::select(Target, gene_id, gene_name, pearson_r, null_percentile, perm_p_value),
       options = list(
         pageLength = 10,
         scrollX = TRUE,
@@ -6967,4 +7713,410 @@ server <- function(input, output, session) {
     removeModal()
     shinyjs::delay(300, shinyjs::click("show_help"))
   })
+
+  # ---------------------------------------------------------------
+  # search-first navbar: command palette, search pill, Gene Explorer landing
+  # ---------------------------------------------------------------
+
+  #species per HOG, one pass over the lookup table instead of a query per keystroke
+  hog_species_count <- reactive({
+    empty <- setNames(integer(0), character(0))
+    gl <- get_all_species_data()$gene_lookup
+    if (is.null(gl) || !NROW(gl)) return(empty)
+    hog <- as.character(gl$hog_id)
+    sp <- as.character(gl$species)
+    keep <- !is.na(hog) & nzchar(hog)
+    if (!any(keep)) return(empty)
+    counts <- tapply(sp[keep], hog[keep], function(x) length(unique(x)))
+    setNames(as.integer(counts), names(counts))
+  })
+
+  observeEvent(input$rnx_query, {
+    raw <- input$rnx_query %||% ""
+    genes <- rnx_gene_suggestions(
+      get_all_species_data()$gene_lookup, raw,
+      hog_species_count(), length(current_species_config())
+    )
+    session$sendCustomMessage("rnx_results", list(query = raw, genes = genes))
+  }, ignoreInit = TRUE)
+
+  #the palette does not run its own query: it drives the Gene Explorer's
+  observeEvent(input$rnx_open_gene, {
+    gene <- input$rnx_open_gene$gene
+    req(is.character(gene), nzchar(gene))
+    updateTextInput(session, "global_gene_query", value = gene)
+    nav_select("nav", "gene_explorer")
+    shinyjs::delay(150, shinyjs::click("global_search_button"))
+  })
+
+  observeEvent(input$rnx_goto, {
+    value <- input$rnx_goto$value
+    req(is.character(value), nzchar(value))
+    nav_select("nav", value)
+  })
+
+  observeEvent(input$rnx_clear_gene, {
+    rnx_reset_query()
+  })
+
+  observeEvent(input$rnx_export, {
+    show_tree_export_modal()
+  })
+
+  #keeps the active chip in sync with wherever the app actually is
+  observeEvent(input$nav, {
+    session$sendCustomMessage("rnx_active_tab", list(value = input$nav))
+  })
+
+  #the palette prefills with whatever gene is in scope, so it needs the name
+  observe({
+    sc <- rnx_scope()
+    in_scope <- !is.null(sc) && !identical(sc$state, "not_found")
+    session$sendCustomMessage("rnx_scope", list(gene = if (in_scope) sc$gene else NULL))
+  })
+
+  # ---- the gene in scope, for the pill and the resume card ----
+
+  #one description of scope for every surface. A restored session has only the
+  #gene name, so the HOG and coverage come from the lookup table instead.
+  rnx_scope <- reactive({
+    q <- global_query_state$current_query
+    if (is.null(q) || !nzchar(q)) return(NULL)
+
+    status <- global_query_state$last_status
+    n_total <- max(1L, length(current_species_config()))
+
+    if (identical(status, "not_found")) {
+      return(list(gene = q, state = "not_found", hog = "", n_species = 0L,
+                  n_total = n_total, level = "low", badge = "not found",
+                  badge_icon = "triangle-exclamation"))
+    }
+
+    qr <- global_query_state$query_result
+    if (!is.null(qr)) {
+      n_sp <- if (!is.null(qr$genes_by_species)) {
+        sum(vapply(qr$genes_by_species, function(d) NROW(d) > 0, logical(1)))
+      } else {
+        0L
+      }
+      hog <- qr$orthogroup %||% ""
+      state <- status %||% "ok"
+    } else {
+      #restored from localStorage: the query has not been re-run yet
+      info <- rnx_gene_scope_info(get_all_species_data()$gene_lookup, q,
+                                  hog_species_count(), n_total)
+      if (!isTRUE(info$found)) return(NULL)
+      n_sp <- info$n_species
+      hog <- info$hog_id
+      state <- if (nzchar(hog)) "cached" else "orphan"
+    }
+
+    if (identical(state, "orphan")) {
+      return(list(gene = q, state = state, hog = "", n_species = 0L, n_total = n_total,
+                  level = "medium", badge = "no orthogroup",
+                  badge_icon = "triangle-exclamation"))
+    }
+
+    ratio <- n_sp / n_total
+    level <- if (ratio >= 0.999) "high" else if (ratio >= 0.5) "medium" else "low"
+    list(
+      gene = q, state = state, hog = hog, n_species = n_sp, n_total = n_total,
+      level = level,
+      badge = sprintf("%d / %d species", n_sp, n_total),
+      badge_icon = if (identical(level, "high")) "circle-check" else "triangle-exclamation"
+    )
+  })
+
+  output$rnx_pill_content <- renderUI({
+    sc <- rnx_scope()
+    if (is.null(sc)) {
+      return(tagList(
+        span(id = "rnx-trigger-label", class = "rnx-trigger-label",
+             "Search a gene, or jump to a tool…"),
+        span(class = "rnx-spacer"),
+        span(class = "rnx-kbd", "⌘K")
+      ))
+    }
+    tagList(
+      span(id = "rnx-trigger-label", class = "rnx-scope-gene", sc$gene),
+      if (nzchar(sc$hog)) span(class = "rnx-scope-hog", sc$hog),
+      span(class = paste("rnx-scope-badge", sc$level),
+           icon(sc$badge_icon), sc$badge),
+      span(class = "rnx-spacer")
+    )
+  })
+
+  output$rnx_pill_clear <- renderUI({
+    if (is.null(rnx_scope())) return(NULL)
+    tags$button(
+      id = "rnx-scope-clear", type = "button", class = "rnx-scope-clear",
+      `aria-label` = "Clear the gene in scope", title = "Clear the gene in scope",
+      icon("xmark")
+    )
+  })
+
+  output$rnx_export_slot <- renderUI({
+    sc <- rnx_scope()
+    if (is.null(sc) || identical(sc$state, "not_found")) return(NULL)
+    tags$button(
+      id = "rnx-export", type = "button", class = "rnx-export",
+      title = "Export the phylogenetic tree",
+      icon("download"), "Export"
+    )
+  })
+
+  # ---- Gene Explorer landing ----
+
+  #example chips validated against whatever data is actually loaded
+  rnx_examples <- reactive({
+    rnx_example_genes(get_all_species_data()$gene_lookup, EXAMPLE_GENES, 5L)
+  })
+
+  #shared by both landing states; scope per species is either its dataset count
+  #or the number of levels on the study design's axis
+  rnx_species_rows <- function() {
+    config <- current_species_config()
+    colors <- species_colors_dynamic()
+    data_all <- get_all_species_data()
+    design <- current_study_design()
+    n_levels <- length(condition_levels(design))
+    axis <- tolower(condition_label(design))
+
+    lapply(names(config), function(sp_code) {
+      sp <- config[[sp_code]]
+      color <- resolve_species_color(sp$short, colors,
+                                     resolve_species_color(sp$name, colors))
+      sp_data <- data_all[[sp_code]]
+      n_sets <- if (is.null(sp_data)) 0L else length(grep("sample_info", names(sp_data), value = TRUE))
+      scope <- if (n_sets > 1L) {
+        sprintf("%d datasets", n_sets)
+      } else {
+        sprintf("%d %ss", n_levels, axis)
+      }
+      tags$tr(
+        tags$td(span(class = "rnx-dot", style = paste0("background:", color, ";"))),
+        tags$td(tags$em(sp$name)),
+        tags$td(scope)
+      )
+    })
+  }
+
+  rnx_dataset_footer <- function() {
+    if (identical(data_source(), "custom")) {
+      div(class = "rnx-card-foot",
+          sprintf("Your uploaded dataset · %d species · ", length(current_species_config())),
+          tags$a(`data-rnx-tool` = "data_upload", "manage"))
+    } else {
+      div(class = "rnx-card-foot",
+          "Demo data · ",
+          tags$a(`data-rnx-tool` = "data_upload", "upload your own"))
+    }
+  }
+
+  #recent genes live in localStorage; command_palette.js pushes them up as JSON
+  rnx_recent_rows <- function() {
+    raw <- input$rnx_recent_genes
+    if (is.null(raw) || !length(raw) || !nzchar(raw[1])) return(NULL)
+    recents <- tryCatch(jsonlite::fromJSON(raw[1], simplifyDataFrame = FALSE),
+                        error = function(e) NULL)
+    if (is.null(recents) || !length(recents)) return(NULL)
+    lapply(recents, function(r) {
+      gene <- if (is.list(r)) r$gene else r
+      at <- if (is.list(r)) r$at else NULL
+      if (is.null(gene) || !nzchar(gene)) return(NULL)
+      tags$button(
+        type = "button", class = "rnx-recent", `data-rnx-gene` = gene,
+        span(class = "rnx-recent-gene", gene),
+        div(class = "rnx-spacer"),
+        span(class = "rnx-recent-at", if (is.null(at)) "earlier" else format_time_ago(at))
+      )
+    })
+  }
+
+  rnx_launchpad <- function() {
+    active <- input$nav %||% "gene_explorer"
+    tiles <- lapply(RNX_TOOL_GROUPS, function(grp) {
+      lapply(Filter(function(t) identical(t$group, grp), RNX_TOOLS), function(tool) {
+        tags$button(
+          type = "button",
+          class = paste0("rnx-tile", if (identical(tool$value, active)) " rnx-tile-current" else ""),
+          `data-rnx-tool` = tool$value,
+          div(class = "rnx-tile-head",
+              span(class = "rnx-tile-icon", tags$i(class = tool$icon)),
+              span(class = "rnx-tile-name", tool$label)),
+          div(class = "rnx-tile-desc", tool$desc)
+        )
+      })
+    })
+
+    recents <- rnx_recent_rows()
+
+    div(
+      class = "rnx-landing",
+      div(
+        class = "rnx-landing-row",
+        div(
+          class = "rnx-landing-main",
+          tags$h2("No gene in scope yet"),
+          div(class = "rnx-landing-sub",
+              "Search above (", span(class = "rnx-inline-kbd", "⌘K"), ") or start from a tool."),
+          div(class = "rnx-tiles", tiles)
+        ),
+        div(
+          class = "rnx-side",
+          if (length(recents)) {
+            div(class = "rnx-card",
+                div(class = "rnx-card-title", "Recent genes"),
+                div(recents))
+          },
+          div(class = "rnx-card",
+              div(class = "rnx-card-title", "Dataset in scope"),
+              tags$table(class = "rnx-species", tags$tbody(rnx_species_rows())),
+              rnx_dataset_footer())
+        )
+      )
+    )
+  }
+
+  rnx_resume_card <- function(sc) {
+    saved_at <- global_query_state$restored_at
+    chips <- lapply(setdiff(rnx_examples(), sc$gene), function(g) {
+      tags$button(type = "button", class = "rnx-gene-chip-btn", `data-rnx-gene` = g, g)
+    })
+
+    div(
+      class = "rnx-landing rnx-landing-resume",
+      div(
+        class = "rnx-landing-row",
+        div(
+          class = "rnx-resume",
+          div(class = "rnx-eyebrow", "Pick up where you left off"),
+          div(
+            class = "rnx-resume-head",
+            span(class = "rnx-resume-gene", sc$gene),
+            if (nzchar(sc$hog)) span(class = "rnx-resume-hog", sc$hog),
+            span(class = paste("coverage-badge", sc$level), sc$badge),
+            if (!is.null(saved_at)) {
+              span(class = "rnx-resume-at", paste("queried", format_time_ago(saved_at)))
+            }
+          ),
+          div(
+            class = "rnx-actions",
+            tags$button(type = "button", class = "rnx-btn rnx-btn-primary",
+                        `data-rnx-gene` = sc$gene,
+                        icon("dna"), "Resume in Gene Explorer"),
+            tags$button(type = "button", class = "rnx-btn rnx-btn-secondary",
+                        id = "rnx-resume-comparative",
+                        icon("layer-group"), "Comparative View"),
+            tags$button(type = "button", class = "rnx-btn rnx-btn-secondary",
+                        id = "rnx-resume-similarity",
+                        icon("chart-line"), "Similar profiles"),
+            tags$button(type = "button", class = "rnx-btn rnx-btn-tertiary",
+                        id = "rnx-start-fresh", "Start fresh")
+          ),
+          div(class = "rnx-resume-divider"),
+          div(class = "rnx-try",
+              div(class = "rnx-eyebrow", "Or try"),
+              div(class = "rnx-try-chips", chips))
+        ),
+        div(
+          class = "rnx-loaded",
+          div(class = "rnx-card-title", "What's loaded"),
+          tags$table(class = "rnx-species", tags$tbody(rnx_species_rows())),
+          div(class = "rnx-loaded-note", rnx_loaded_note()),
+          tags$button(type = "button", class = "rnx-btn rnx-btn-secondary rnx-btn-block",
+                      `data-rnx-tool` = "data_upload",
+                      icon("upload"), "Upload your own dataset")
+        )
+      )
+    )
+  }
+
+  #the sc multi-dataset sentence only makes sense for the bundled GRE data
+  rnx_loaded_note <- function() {
+    design <- current_study_design()
+    levels <- condition_levels(design)
+    axis <- tolower(condition_label(design))
+    span_range <- if (length(levels) > 1) {
+      sprintf("%ss run %s → %s.", axis, levels[1], levels[length(levels)])
+    } else {
+      sprintf("One %s level.", axis)
+    }
+    multi <- names(Filter(function(sp_code) {
+      sp_data <- get_all_species_data()[[sp_code]]
+      !is.null(sp_data) && length(grep("sample_info", names(sp_data), value = TRUE)) > 1L
+    }, setNames(names(current_species_config()), names(current_species_config()))))
+
+    if (!length(multi)) return(span_range)
+    config <- current_species_config()
+    tagList(
+      span_range, " ",
+      tags$em(config[[multi[1]]]$short),
+      " can switch between the 2023 set, WT S288C 2026 and Δppx1 Δppn1 2026 in Plot settings."
+    )
+  }
+
+  output$rnx_explorer_landing <- renderUI({
+    if (!is.null(global_query_state$query_result)) return(NULL)
+    sc <- rnx_scope()
+    if (!is.null(sc) && !identical(sc$state, "not_found")) rnx_resume_card(sc) else rnx_launchpad()
+  })
+
+  # ---- resume actions ----
+
+  #narrower than the clearSession handler on purpose: that one drops
+  #rnacross_seen_version and reloads, which pops the What's New modal again
+  rnx_reset_query <- function() {
+    global_query_state$current_query <- NULL
+    global_query_state$query_result <- NULL
+    global_query_state$tree_data <- NULL
+    global_query_state$last_status <- NULL
+    global_query_state$restored_at <- NULL
+    updateTextInput(session, "global_gene_query", value = "")
+    shinyjs::hide("gene_explorer_results")
+    session$sendCustomMessage("rnx_forget_query", list(rand = runif(1)))
+  }
+
+  observeEvent(input$rnx_start_fresh, {
+    rnx_reset_query()
+  })
+
+  observeEvent(input$rnx_resume_jump, {
+    gene <- global_query_state$current_query
+    target <- input$rnx_resume_jump$target
+    req(is.character(gene), nzchar(gene), is.character(target))
+
+    if (identical(target, "Comparative View")) {
+      updateTextInput(session, "combined_genename", value = gene)
+      nav_select("nav", "Comparative View")
+      shinyjs::delay(150, shinyjs::click("combined_search_button"))
+    } else {
+      #similarity needs a reference species chosen first, so only prefill
+      updateTextInput(session, "similarity_gene_input", value = gene)
+      nav_select("nav", "similarity_search")
+    }
+  })
+
+  #the resume card's relative time comes from the restored session payload
+  observeEvent(input$restore_session, {
+    global_query_state$restored_at <- input$restore_session$saved_at
+  })
+
+  #?tab=&gene= deep links, for the palette's Cmd+Enter. Only fires when the url
+  #actually carries them, so a normal load leaves restore_session_state alone.
+  observeEvent(session$clientData$url_search, {
+    qs <- parseQueryString(session$clientData$url_search %||% "")
+    tab <- qs$tab
+    gene <- qs$gene
+    if (is.null(tab) && is.null(gene)) return()
+    shinyjs::delay(900, {
+      if (!is.null(gene) && nzchar(gene)) {
+        updateTextInput(session, "global_gene_query", value = gene)
+        nav_select("nav", tab %||% "gene_explorer")
+        shinyjs::delay(150, shinyjs::click("global_search_button"))
+      } else if (nzchar(tab)) {
+        nav_select("nav", tab)
+      }
+    })
+  }, once = TRUE)
 }

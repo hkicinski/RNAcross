@@ -1,4 +1,34 @@
 app_version_history <- list(
+  "3.2.0" = list(
+    version      = "3.2.0",
+    release_date = "2026-08-19",
+    title        = "Search-First Navigation & Design-Agnostic Data",
+    message      = c(
+      "The nine-tab strip is replaced by a single bar with a Ctrl+K command palette that searches genes and tools together, the Gene Explorer now opens on a launchpad or your last query instead of a blank tab, and uploaded data is no longer assumed to be a time course."
+    ),
+    features   = c(
+      "Command Palette: Press Ctrl+K (Cmd+K on macOS) from anywhere to search genes and jump between tools in one box. Type a gene and press Enter to run the orthogroup query, or type a tool name to go there. The search bar is now on every tab, so the Gene Query Hub panel has been retired.",
+      "One Navigation Bar: The tab strip and the title row beneath it are now a single 60px bar, nearly halving the space above your plots. The gene in scope sits in the search field itself with its orthogroup and species coverage, and the three tools you last used stay on the bar as shortcuts.",
+      "Gene Explorer Landing: The tab no longer opens empty. With no cached query you get a launchpad of all nine tools, your recent genes, and the dataset in scope; with a cached query you get your last gene back with its coverage, one click from reopening it in the Gene Explorer, Comparative View, or Find Similar Profiles.",
+      "Design-Agnostic Data: A dose series, stage series, or genotype panel now orders, standardizes, and normalizes correctly. Uploads keep their own column names, only Sample is a required metadata column, and axis titles read your design's label rather than 'Timepoint'.",
+      "Gene Tree Upload: Uploaded datasets can now supply the newick gene trees the Gene Explorer draws, as a zipped OrthoFinder Gene_Trees folder, loose .nwk files, or a two-column table of orthogroup and newick.",
+      "Editable Similarity Plot: The Find Similar Profiles overlay is now wired into the Interactive Aesthetic Editor, and every edit carries into the ggprism publication figure and both of its exports.",
+      "Phylogenetic Tree Editor & Export: The Gene Explorer tree gains a full appearance panel (title, tips, branches, nodes, legend, background) and an export offering PNG, JPEG, PDF, or SVG at your chosen size and resolution.",
+      "RNAcross Standard Species Colors: The four-species set now defaults to fixed hues, restorable at any time from the species palette dropdown."
+    ),
+    bug_fixes  = c(
+      "Uploads Without a Design: Processing custom data before describing its design quietly factored it against the built-in 0min to 8h time course and blanked every plot. A design is now inferred from your sample metadata instead, and the inference is announced so it is never mistaken for one you chose.",
+      "Blank Gene Explorer After a Failed Search: Searching for a gene that does not exist left the tab empty with no explanation. It now returns to the launchpad and reports 'not found' in the search bar.",
+      "Unreplicated Uploads: Sample sheets without a Replicate column no longer crash the similarity search, and may now omit it entirely or supply it for only some species.",
+      "Non-Time Axis Column Order: A dose series came back ordered 0uM, 100uM, 10uM, 1uM in the consensus matrix and the heatmap. Both now follow the design's level order.",
+      "Publication PCA With Labels: Fixed an 'object Sample not found' error that left the publication-mode PCA blank when labels were enabled.",
+      "Phylogenetic Tree on ggplot2 4.0: The tree (and its export) no longer dies with a geom conversion error on fresh installs that pull the newest ggplot2.",
+      "Aesthetic Editor Defaults: Opening the editor, or clicking a second element, no longer silently restyles the plot to Arial 12. Axis title edits, Display Mode, and Marker Size now work."
+    ),
+    show_changelog = TRUE,
+    changelog_url  = "https://github.com/hkicinski/RNAcross/blob/main/CHANGELOG.md",
+    show_tutorial  = FALSE
+  ),
   "3.1.3" = list(
     version      = "3.1.3",
     release_date = "2026-07-03",

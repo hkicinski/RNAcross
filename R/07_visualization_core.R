@@ -17,7 +17,7 @@
 #' @param plot_settings Optional plot settings list
 #' @return Plotly interactive plot
 create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode = FALSE,
-                             species_colors = NULL, transform_type = "lcpm", plot_settings = NULL) {
+                             species_colors = NULL, transform_type = "lcpm", plot_settings = NULL, study_design = GRE_study_design()) {
   tryCatch(
     {
       # try to find the gene with different formats (for K. lactis)
@@ -69,22 +69,46 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
         16L
       }
 
-      # normalize timepoint format (handle both "0min" and "0" formats)
-      normalized_timepoints <- sample_info$Timepoint
-      normalized_timepoints <- gsub("^(\\d+)$", "\\1min", normalized_timepoints)
-      normalized_timepoints <- gsub("^(\\d+)min$", "\\1min", normalized_timepoints)
+      # read the axis from the column the design names, not a fixed "Timepoint"
+      axis_labels <- as.character(condition_of(study_design, sample_info))
+      lv <- condition_levels(study_design)
+
+      # legacy stock tables store "0" where the design declares "0min"
+      if (!all(axis_labels %in% lv)) {
+        retimed <- gsub("^(\\d+)$", "\\1min", axis_labels)
+        if (sum(retimed %in% lv) > sum(axis_labels %in% lv)) axis_labels <- retimed
+      }
+
+      # match samples by name; matrix column order need not follow the table
+      if ("Sample" %in% names(sample_info)) {
+        col_idx <- match(as.character(sample_info$Sample), colnames(lc))
+        row_idx <- which(!is.na(col_idx))
+        col_idx <- col_idx[row_idx]
+      } else {
+        n <- min(nrow(sample_info), ncol(lc))
+        row_idx <- seq_len(n)
+        col_idx <- seq_len(n)
+      }
+      if (length(row_idx) == 0) {
+        stop("no sample in the expression matrix matches the sample table")
+      }
 
       dt <- data.table(
-        Sample = colnames(lc),
-        Timepoint = factor(normalized_timepoints, levels = TIME_POINTS),
-        Replicate = sample_info$Replicate,
-        exn = as.numeric(lc[gene_to_use, ])
+        Sample = colnames(lc)[col_idx],
+        Timepoint = factor(axis_labels[row_idx], levels = lv),
+        Replicate = replicate_of(study_design, sample_info)[row_idx],
+        exn = as.numeric(lc[gene_to_use, col_idx])
       )
-      
+
+      if (all(is.na(dt$Timepoint))) {
+        stop(sprintf("no sample matches the declared %s levels (%s)",
+                     condition_label(study_design), paste(lv, collapse = ", ")))
+      }
+
       has_contrast <- "Contrast_Series" %in% names(sample_info) && length(unique(sample_info$Contrast_Series)) > 1
       
       if (has_contrast) {
-        dt$Series <- sample_info$Contrast_Series
+        dt$Series <- sample_info$Contrast_Series[row_idx]
         dt$Group <- paste(dt$Series, "Rep", dt$Replicate)
       } else {
         dt$Series <- species_name
@@ -175,7 +199,8 @@ create_gene_plot <- function(lc, gene, sample_info, species_name, is_dark_mode =
         scale_color_manual(values = color_vector) +
         scale_shape_manual(values = shape_vector) +
         labs(
-          y = get_expression_label(transform_type),
+          x = condition_label(study_design),
+          y = get_expression_label(transform_type, lc),
           color = if (has_contrast) "Series - Replicate" else "Replicate",
           shape = if (has_contrast) "Series - Replicate" else "Replicate"
         ) +
@@ -309,7 +334,8 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
                                        alpha = 0.05,
                                        selected_gene = NULL,
                                        selected_comparisons = NULL,
-                                       plot_settings = NULL) {
+                                       plot_settings = NULL,
+                                       study_design = GRE_study_design()) {
   plot_bg_color <- if (is_dark_mode) "#2c3034" else "white"
   text_color <- if (is_dark_mode) "white" else "black"
   grid_color <- if (is_dark_mode) "gray30" else "gray90"
@@ -321,7 +347,7 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
     if (data_transform == "log2fc") {
       # Calculate baseline (0min) per Group and Gene
       baseline_data <- plot_data %>%
-        filter(Timepoint %in% c("0min", "0")) %>%
+        filter(Timepoint %in% c(condition_reference(study_design), "0")) %>%
         group_by(Group, Gene) %>%
         summarise(Baseline = mean(Expression, na.rm = TRUE), .groups = "drop")
 
@@ -477,7 +503,7 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
           "Analyzing", n_genes, "genes across", n_groups,
           if (n_groups == 1) "group" else "groups"
         ),
-        x = "Timepoint",
+        x = condition_label(study_design),
         y = y_label
       ) +
       theme_minimal()
@@ -789,7 +815,7 @@ create_group_visualization <- function(plot_data, viz_type, is_dark_mode = FALSE
           "</sub>"
         ),
         xaxis = list(
-          title = "Timepoint",
+          title = condition_label(study_design),
           tickangle = -45
         ),
         yaxis = list(
@@ -848,7 +874,7 @@ create_group_summary_table <- function(plot_data, species_name = NULL) {
 #' @param is_dark_mode Logical for dark mode styling
 #' @param plot_settings Optional plot settings list
 #' @return Plotly interactive plot
-create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE, plot_settings = NULL) {
+create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE, plot_settings = NULL, study_design = GRE_study_design()) {
   if (!is.matrix(expression_matrix) && !is.data.frame(expression_matrix)) {
     stop("Expression matrix must be a matrix or data frame")
   }
@@ -861,8 +887,12 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
   var_genes <- apply(expression_matrix, 1, var)
   expression_matrix <- expression_matrix[var_genes > 0, , drop = FALSE]
 
+  #per-gene z-score UPSTREAM (image-6 pipeline); prcomp then only runs the SVD
+  expression_matrix <- t(scale(t(expression_matrix), center = TRUE, scale = TRUE))
+  expression_matrix[!is.finite(expression_matrix)] <- 0
+
   mat <- t(expression_matrix)
-  pca_res <- prcomp(mat, scale. = FALSE, center = TRUE)
+  pca_res <- prcomp(mat, scale. = FALSE, center = FALSE)
   var_explained <- (pca_res$sdev^2 / sum(pca_res$sdev^2)) * 100
 
   pca_data <- data.frame(
@@ -872,7 +902,7 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
   )
 
   pca_data <- merge(pca_data, sample_info, by = "Sample", all.x = TRUE)
-  pca_data$Timepoint <- factor(pca_data$Timepoint, levels = TIME_POINTS)
+  pca_data$Timepoint <- factor(pca_data$Timepoint, levels = condition_levels(study_design))
 
   pca_collapse <- if (!is.null(plot_settings) && length(plot_settings$pca_collapse_reps) > 0) plot_settings$pca_collapse_reps else "none"
   if (pca_collapse %in% c("mean", "median") && "Replicate" %in% names(pca_data)) {
@@ -906,6 +936,7 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
     labs(
       x = sprintf("PC1 (%.1f%%)", var_explained[1]),
       y = sprintf("PC2 (%.1f%%)", var_explained[2]),
+      color = condition_label(study_design),
       title = "PCA of Gene Expression Data"
     ) +
     theme_minimal() +
@@ -925,7 +956,8 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
   if (!is.null(plot_settings) && isTRUE(plot_settings$pca_viz_mode == "publication")) {
     pca_data <- pca_data[order(as.numeric(pca_data$Timepoint)), ]
     
-    if (isTRUE(plot_settings$pca_trajectories)) {
+    #arrows imply an ordered axis; a nominal one has no path to draw
+    if (isTRUE(plot_settings$pca_trajectories) && can_draw_trajectory(study_design)) {
       path_data <- pca_data %>%
         dplyr::group_by(Timepoint) %>%
         dplyr::summarize(
@@ -935,9 +967,11 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
         ) %>%
         dplyr::arrange(as.numeric(Timepoint))
         
+      #own data, so do not inherit the global aes (it carries text = Sample)
       p <- p + geom_path(
         data = path_data,
         aes(x = PC1, y = PC2, group = 1),
+        inherit.aes = FALSE,
         arrow = arrow(length = unit(0.15, "inches"), type = "closed"),
         alpha = 0.7,
         linewidth = 0.8
@@ -945,10 +979,13 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
     }
 
     if (isTRUE(plot_settings$pca_labels)) {
-      pca_data$pub_label <- ifelse(is.na(as.numeric(pca_data$Timepoint)), 
-                                   as.character(pca_data$Timepoint), 
-                                   paste0("T", as.numeric(pca_data$Timepoint)))
-      
+      #short codes only make sense on an ordered axis; otherwise show the level
+      pca_data$pub_label <- if (condition_is_ordered(study_design)) {
+        condition_codes(study_design, as.character(pca_data$Timepoint))
+      } else {
+        as.character(pca_data$Timepoint)
+      }
+
       label_data <- pca_data %>%
         dplyr::group_by(Timepoint, pub_label) %>%
         dplyr::summarize(
@@ -960,6 +997,7 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
       p <- p + ggrepel::geom_text_repel(
         data = label_data,
         aes(x = PC1, y = PC2, label = pub_label),
+        inherit.aes = FALSE,
         size = 3.5,
         bg.color = "white",
         bg.r = 0.15,
@@ -1003,7 +1041,7 @@ create_pca_plot <- function(expression_matrix, sample_info, is_dark_mode = FALSE
 #' @return Plotly interactive plot with matrices_data attribute
 create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, aggregation_method = "eigengene",
                                      species_config = DEFAULT_SPECIES_CONFIG, all_species_data_obj = NULL,
-                                     transform_type = "lcpm", debug = FALSE, plot_settings = NULL) {
+                                     transform_type = "lcpm", debug = FALSE, plot_settings = NULL, study_design = GRE_study_design()) {
   if (length(aggregation_method) == 0) aggregation_method <- "eigengene"
   if (length(transform_type) == 0) transform_type <- "lcpm"
   
@@ -1033,7 +1071,15 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     species_data_list[[species_id]] <- sp_data
 
     if (!is.null(sp_data)) {
-      expression_matrix_cache[[species_id]] <- get_expression_matrix(species_id, transform_type, sp_data)
+      #per-species per-gene z-score UPSTREAM (image-6 pipeline): removes each
+      #species' own baseline (mean) and amplitude (sd) BEFORE pooling, so prcomp
+      #below does not remove an arbitrary grand cross-species mean/sd.
+      em <- get_expression_matrix(species_id, transform_type, sp_data)
+      if (!is.null(em)) {
+        em <- t(scale(t(em), center = TRUE, scale = TRUE))
+        em[!is.finite(em)] <- 0
+      }
+      expression_matrix_cache[[species_id]] <- em
       sample_info_cache[[species_id]] <- if (!is.null(sp_data$sample_info)) sp_data$sample_info else sp_data[[paste0(species_id, "_sample_info")]]
     }
   }
@@ -1094,13 +1140,22 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
     sample_info <- sample_info_cache[[species_id]]
 
     if (!is.null(lcpm_matrix) && !is.null(sample_info)) {
-      sample_metadata_list[[species_id]] <- data.frame(
-        Sample = colnames(lcpm_matrix),
-        Species = config[[species_id]]$short,
-        Timepoint = sample_info$Timepoint,
-        Replicate = sample_info$Replicate,
-        stringsAsFactors = FALSE
-      )
+      # same seam as create_gene_plot: axis by design, samples matched by name
+      idx <- if ("Sample" %in% names(sample_info)) {
+        match(colnames(lcpm_matrix), as.character(sample_info$Sample))
+      } else {
+        seq_len(min(ncol(lcpm_matrix), nrow(sample_info)))
+      }
+      keep <- which(!is.na(idx))
+      if (length(keep) > 0) {
+        sample_metadata_list[[species_id]] <- data.frame(
+          Sample = colnames(lcpm_matrix)[keep],
+          Species = config[[species_id]]$short,
+          Timepoint = as.character(condition_of(study_design, sample_info))[idx[keep]],
+          Replicate = replicate_of(study_design, sample_info)[idx[keep]],
+          stringsAsFactors = FALSE
+        )
+      }
     }
   }
 
@@ -1285,7 +1340,8 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
 
   tryCatch(
     {
-      pca_result <- prcomp(sample_matrix, scale. = TRUE, center = TRUE)
+      #normalization already done per species upstream; prcomp only runs the SVD
+      pca_result <- prcomp(sample_matrix, scale. = FALSE, center = FALSE)
       var_explained <- (pca_result$sdev^2 / sum(pca_result$sdev^2)) * 100
 
       debug_print(paste("PCA successful. PC1 explains", round(var_explained[1], 1), "% variance"))
@@ -1297,7 +1353,7 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
       )
 
       plot_data <- merge(plot_data, sample_metadata, by = "Sample")
-      plot_data$Timepoint <- factor(plot_data$Timepoint, levels = TIME_POINTS)
+      plot_data$Timepoint <- factor(plot_data$Timepoint, levels = condition_levels(study_design))
 
       pca_collapse <- if (!is.null(plot_settings) && length(plot_settings$pca_collapse_reps) > 0) plot_settings$pca_collapse_reps else "none"
       if (pca_collapse %in% c("mean", "median") && "Replicate" %in% names(plot_data)) {
@@ -1492,9 +1548,11 @@ create_multi_species_pca <- function(get_species_data, is_dark_mode = FALSE, agg
               .groups = "drop"
             ) %>%
             dplyr::arrange(Species, as.numeric(Timepoint))
-            
+
+          #spline the trajectory (smooth curve through the timepoint means)
+          spline_data <- compute_pca_spline(path_data)
           p <- p + geom_path(
-            data = path_data,
+            data = spline_data,
             aes(x = PC1, y = PC2, group = Species, color = SpeciesTime),
             arrow = arrow(length = unit(0.15, "inches"), type = "closed"),
             alpha = 0.7,
@@ -1637,7 +1695,7 @@ calculate_significance <- function(plot_data, alpha = 0.05, selected_gene = NULL
 #' @param is_dark_mode Logical for dark mode styling
 #' @param plot_settings Optional plot settings list
 #' @return ggplot object
-create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE, plot_settings = NULL) {
+create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE, plot_settings = NULL, study_design = GRE_study_design()) {
   # preallocate list for faster data collection
   data_list <- vector("list", length = sum(sapply(species_data_list, function(x) {
     sample_info <- if ("sample_info" %in% names(x)) x$sample_info else x[[paste0(names(species_data_list)[1], "_sample_info")]]
@@ -1675,7 +1733,7 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE, plot_
   }
 
   all_density_data <- rbindlist(data_list[1:(list_idx - 1)])
-  all_density_data$Timepoint <- factor(all_density_data$Timepoint, levels = TIME_POINTS)
+  all_density_data$Timepoint <- factor(all_density_data$Timepoint, levels = condition_levels(study_design))
 
   plot_bg_color <- if (is_dark_mode) "#2c3034" else "white"
   text_color <- if (is_dark_mode) "white" else "black"
@@ -1732,7 +1790,7 @@ create_ridgeline_plot <- function(species_data_list, is_dark_mode = FALSE, plot_
 #' @param is_dark_mode Logical for dark mode styling
 #' @param plot_settings Optional plot settings list
 #' @return ggplot object
-create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark_mode = FALSE, plot_settings = NULL) {
+create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark_mode = FALSE, plot_settings = NULL, study_design = GRE_study_design()) {
   count_list <- list()
   list_idx <- 1
 
@@ -1769,7 +1827,7 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
   }
 
   count_data <- rbindlist(count_list)
-  count_data$Timepoint <- factor(count_data$Timepoint, levels = TIME_POINTS)
+  count_data$Timepoint <- factor(count_data$Timepoint, levels = condition_levels(study_design))
 
   plot_bg_color <- if (is_dark_mode) "#2c3034" else "white"
   text_color <- if (is_dark_mode) "white" else "black"
@@ -1790,7 +1848,7 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
     scale_fill_viridis(discrete = TRUE, option = ridgeline_pal) +
     labs(
       title = paste("Percentage of Genes with Expression Above", threshold, "log2 CPM"),
-      x = "Timepoint",
+      x = condition_label(study_design),
       y = "Percent of Genes (%)"
     ) +
     theme_minimal() +
@@ -1825,11 +1883,13 @@ create_threshold_ridgeline <- function(species_data_list, threshold = 2, is_dark
 #' @param current_data Current species data object
 #' @param species_colors Named list of species colors
 #' @param species_config Species configuration list
+#' @param aes_opts Optional aesthetic overrides from the tree editor (see DEFAULT_TREE_AES)
 #' @return ggtree plot object
-create_phylo_tree_plot <- function(tree, orthogroup_genes, orthogroup_id, is_dark_mode = FALSE, current_data = NULL, species_colors = NULL, species_config = NULL) {
+create_phylo_tree_plot <- function(tree, orthogroup_genes, orthogroup_id, is_dark_mode = FALSE, current_data = NULL, species_colors = NULL, species_config = NULL, aes_opts = NULL) {
   if (is.null(tree)) {
     return(NULL)
   }
+  o <- modifyList(DEFAULT_TREE_AES, aes_opts %||% list())
 
   # create gene ID mapping using list collection
   mapping_list <- lapply(names(orthogroup_genes), function(sp) {
@@ -1903,59 +1963,110 @@ create_phylo_tree_plot <- function(tree, orthogroup_genes, orthogroup_id, is_dar
   n_tips <- length(tree$tip.label)
   max_label_length <- max(nchar(tip_metadata$display_label))
 
-  # Dynamic text size - smaller for larger trees
-  text_size <- if (n_tips > 20) 2.5 else if (n_tips > 10) 3.0 else 3.5
+  # Dynamic text size - smaller for larger trees, unless the editor set one
+  text_size <- o$tip_size %||% (if (n_tips > 20) 2.5 else if (n_tips > 10) 3.0 else 3.5)
 
-  # Dynamic x-limit to accommodate long labels
-  x_limit <- 8 + (max_label_length / 10)
+  #editor value first, then the dark/light default
+  fg <- if (is_dark_mode) "white" else "black"
+  bg <- o$bg_color %||% (if (is_dark_mode) "#2c3034" else "white")
+  branch_color <- o$branch_color %||% fg
+  #six-digit hex only: R graphics rejects the three-digit CSS form
+  node_color <- o$node_color %||% (if (is_dark_mode) "#666666" else "#999999")
+  title_color <- o$title_color %||% fg
+  legend_text_color <- o$legend_text_color %||% fg
+  by_species <- !identical(o$tip_color_mode, "single")
 
   # create the tree plot and add metadata
-  p <- ggtree(tree, layout = "rectangular", branch.length = "none") %<+% tip_metadata +
-    geom_tiplab(aes(label = display_label, color = species),
-      size = text_size, align = TRUE, linesize = 0.5
-    ) +
-    geom_nodepoint(
-      color = if (is_dark_mode) "#666" else "#999",
-      alpha = 0.5, size = 2
-    ) +
-    scale_color_manual(values = species_colors, name = "Species") +
-    guides(color = guide_legend(override.aes = list(label = "●", size = 6, linetype = 0))) +
+  p <- ggtree(tree, layout = "rectangular", branch.length = "none")
+
+  #style branches on ggtree's layers; color/size args to ggtree() are dropped
+  for (i in seq_along(p$layers)) {
+    p$layers[[i]]$aes_params$colour <- branch_color
+    p$layers[[i]]$aes_params$linewidth <- o$branch_width
+  }
+
+  p <- p %<+% tip_metadata
+
+  #reserve room for tip labels from the drawn tree, longest label and font size
+  max_x <- suppressWarnings(max(p$data$x, na.rm = TRUE))
+  if (!is.finite(max_x) || max_x <= 0) max_x <- 8
+  label_frac <- min(0.65, (max_label_length * text_size * 0.6) / 165)
+  x_limit <- (max_x / (1 - label_frac)) * (o$label_space %||% 1)
+
+  if (by_species) {
+    p <- p +
+      geom_tiplab(aes(label = display_label, color = species),
+        size = text_size, align = o$tip_align, linesize = 0.5
+      ) +
+      scale_color_manual(values = species_colors, name = o$legend_title) +
+      guides(color = guide_legend(override.aes = list(label = "●", size = 6, linetype = 0)))
+  } else {
+    p <- p +
+      geom_tiplab(aes(label = display_label), color = o$tip_color,
+        size = text_size, align = o$tip_align, linesize = 0.5
+      )
+  }
+
+  if (isTRUE(o$node_show)) {
+    p <- p + geom_nodepoint(color = node_color, alpha = 0.5, size = o$node_size)
+  }
+
+  legend_pos <- if (!isTRUE(o$legend_show) || !by_species) "none" else o$legend_position
+
+  p <- p +
     theme_tree2() +
     xlim_tree(x_limit) +
     theme(
-      legend.position = "bottom",
+      legend.position = legend_pos,
       legend.box.background = element_rect(
-        fill = if (is_dark_mode) "#2c3034" else "white",
-        color = if (is_dark_mode) "#444" else "#ddd"
+        fill = bg,
+        color = if (is_dark_mode) "#444444" else "#dddddd"
       ),
-      plot.background = element_rect(
-        fill = if (is_dark_mode) "#2c3034" else "white",
-        color = NA
-      ),
-      panel.background = element_rect(
-        fill = if (is_dark_mode) "#2c3034" else "white",
-        color = NA
-      ),
-      legend.background = element_rect(
-        fill = if (is_dark_mode) "#2c3034" else "white"
-      ),
+      plot.background = element_rect(fill = bg, color = NA),
+      panel.background = element_rect(fill = bg, color = NA),
+      legend.background = element_rect(fill = bg),
       legend.text = element_text(
-        color = if (is_dark_mode) "white" else "black",
-        size = 10
+        color = legend_text_color,
+        size = o$legend_text_size
       ),
       legend.title = element_text(
-        color = if (is_dark_mode) "white" else "black",
-        size = 11,
+        color = legend_text_color,
+        size = o$legend_title_size,
         face = "bold"
       ),
       plot.title = element_text(
-        color = if (is_dark_mode) "white" else "black",
-        size = 14,
-        face = "bold",
+        color = title_color,
+        size = o$title_size,
+        face = if (isTRUE(o$title_bold)) "bold" else "plain",
         hjust = 0.5
       )
-    ) +
-    ggtitle(paste("Phylogenetic Tree for Orthogroup", orthogroup_id))
+    )
+
+  if (isTRUE(o$title_show)) {
+    p <- p + ggtitle(o$title_text %||% paste("Phylogenetic Tree for Orthogroup", orthogroup_id))
+  }
 
   return(p)
+}
+
+#smooth a per-species PCA trajectory into a parametric spline through the
+#timepoint means (replaces straight point-to-point segments); colour column
+#SpeciesTime is carried so the smooth line keeps the timepoint gradient.
+compute_pca_spline <- function(path_data, n_out = 100) {
+  parts <- split(path_data, path_data$Species)
+  out <- lapply(parts, function(d) {
+    d <- d[order(as.numeric(d$Timepoint)), , drop = FALSE]
+    n <- nrow(d)
+    if (n < 3) return(d[, c("PC1", "PC2", "Species", "SpeciesTime"), drop = FALSE])
+    tt <- seq_len(n)
+    to <- seq(1, n, length.out = n_out)
+    data.frame(
+      PC1 = stats::spline(tt, d$PC1, xout = to)$y,
+      PC2 = stats::spline(tt, d$PC2, xout = to)$y,
+      Species = d$Species[1],
+      SpeciesTime = d$SpeciesTime[pmin(floor(to), n)],
+      stringsAsFactors = FALSE
+    )
+  })
+  do.call(rbind, out)
 }
